@@ -58,14 +58,14 @@ recv(Sock) ->
 		{udp, Sock, IP, Port, Pkt} ->
 			io:format("received ~p\n", [Pkt]),
 			case 'KRB5':decode('AS-REP', Pkt) of
-				{ok, Req} -> io:format("~s\n", ['KRB5':pretty_print(Req)]);
+				{ok, Req, <<>>} -> io:format("~s\n", ['KRB5':pretty_print(Req)]);
 				_ -> ok
 			end,
 			case 'KRB5':decode('KRB-ERROR', Pkt) of
-				{ok, Err = #'KRB-ERROR'{'e-data' = EData}} ->
+				{ok, Err = #'KRB-ERROR'{'e-data' = EData}, <<>>} ->
 					io:format("~s\n", ['KRB5':pretty_print(Err)]),
 					case 'KRB5':decode('METHOD-DATA', EData) of
-						{ok, PaDatas} ->
+						{ok, PaDatas, <<>>} ->
 							io:format("e-data decoded: ~s\n", ['KRB5':pretty_print(PaDatas)]);
 						_ -> ok
 					end;
