@@ -1,0 +1,16 @@
+{application, kerlberos,
+ [
+  {description, "Keberos for erlang"},
+  {vsn, "1.0"},
+  {registered, []},
+  {included_applications, [
+  ]},
+  {applications, [
+                  kernel,
+                  stdlib,
+                  asn1
+                 ]},
+  {mod, { krlb_app, []}},
+  {env, [
+    ]}
+ ]}.
