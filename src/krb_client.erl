@@ -14,7 +14,7 @@
 
 -export([init/1, handle_info/3]).
 -export([unauthed/2, unauthed/3]).
--export([probe/2, probe_wait/2, auth/2]).
+-export([probe/2, probe_wait/2, auth/2, auth_wait/2]).
 
 -export([open/1, open/2, authenticate/3]).
 
@@ -49,6 +49,7 @@ authenticate(Client, Principal, Secret) ->
 	etype :: atom(),
 	salt :: binary(),
 	key :: binary(),
+	nonce :: integer(),
 	expect :: [atom()]
 	}).
 
@@ -135,8 +136,73 @@ probe_wait(timeout, S = #state{kdcs = [This | Rest]}) ->
 	{next_state, probe, S#state{kdcs = Rest ++ [This]}, 0}.
 
 auth(timeout, S = #state{sock = Sock, kdcs = [Kdc | _], realm = Realm, principal = Principal, secret = Secret, etype = EType, salt = Salt}) ->
-	io:format("auth not impl\n"),
-	{next_state, auth, S}.
+	Now = {_, _, USec} = os:timestamp(),
+	NowKrb = datetime_to_krbtime(calendar:now_to_universal_time(Now)),
+	Options = sets:from_list([renewable]),
+	Nonce = crypto:rand_uniform(1, 1 bsl 31),
+	<<Flags:32/big>> = encode_bit_flags(Options, ?kdc_flags),
+	ReqBody = #'KDC-REQ-BODY'{
+		'kdc-options' = <<Flags:32/little>>,
+		cname = #'PrincipalName'{'name-type' = 1, 'name-string' = ["s7654321"]},
+		sname = #'PrincipalName'{'name-type' = 2, 'name-string' = ["krbtgt", "KRB5.UQ.EDU.AU"]},
+		realm = "KRB5.UQ.EDU.AU",
+		%from = NowKrb,
+		till = datetime_to_krbtime(calendar:now_to_universal_time(now_add(Now, 4*3600*1000))),
+		nonce = Nonce,
+		etype = [krb_crypto:atom_to_etype(EType)]
+	},
+	PAEncTs = #'PA-ENC-TS-ENC'{
+		patimestamp = NowKrb,
+		pausec = USec
+	},
+	{ok, PAEncPlain} = 'KRB5':encode('PA-ENC-TS-ENC', PAEncTs),
+	Key = krb_crypto:string_to_key(EType, iolist_to_binary(Secret), iolist_to_binary(Salt)),
+	EncData = #'EncryptedData'{
+		etype = krb_crypto:atom_to_etype(EType),
+		cipher = krb_crypto:encrypt(EType, Key, PAEncPlain, [{usage, 1}])
+	},
+	{ok, PAEnc} = 'KRB5':encode('PA-ENC-TIMESTAMP', EncData),
+	PAData = [#'PA-DATA'{'padata-type' = 2, 'padata-value' = PAEnc},
+			  #'PA-DATA'{'padata-type' = 3, 'padata-value' = Salt}],
+	Req = #'KDC-REQ'{
+		pvno = 5,
+		'msg-type' = 10,
+		padata = PAData,
+		'req-body' = ReqBody
+		},
+	{ok, Pkt} = 'KRB5':encode('AS-REQ', Req),
+	{Host, Port} = Kdc,
+	io:format("sending auth request to ~p:~p\n", [Host, Port]),
+	ok = gen_udp:send(Sock, Kdc, Port, Pkt),
+	{next_state, auth_wait, S#state{expect = ['AS-REP', 'KRB-ERROR'], key = Key, nonce = Nonce}, S#state.timeout}.
+
+auth_wait(#'KDC-REP'{'enc-part' = EncPart}, S = #state{auth_client = Client, nonce = Nonce}) ->
+	Now = os:timestamp(),
+	NowKrb = datetime_to_krbtime(calendar:now_to_universal_time(Now)),
+	Valid = case EncPart of
+		#'EncKDCRepPart'{nonce = Nonce, endtime = End} ->
+			if
+				(End > NowKrb) -> true;
+				true -> false
+			end;
+		_ -> false
+	end,
+	case Valid of
+		true ->
+			gen_fsm:reply(Client, ok),
+			{next_state, authed, S#state{expect = []}};
+		false ->
+			gen_fsm:reply(Client, {error, invalid_response}),
+			{next_state, unauthed, S#state{expect = []}}
+	end;
+
+auth_wait(Err = #'KRB-ERROR'{}, S = #state{auth_client = Client}) ->
+	gen_fsm:reply(Client, {error, {krb5_error, Err#'KRB-ERROR'.'error-code', Err#'KRB-ERROR'.'e-text'}}),
+	{next_state, unauthed, S#state{expect = []}};
+
+auth_wait(timeout, S = #state{auth_client = Client}) ->
+	gen_fsm:reply(Client, {error, timeout}),
+	{next_state, unauthed, S#state{expect = []}}.
 
 handle_info({udp, Sock, IP, Port, Data}, State, S = #state{sock = Sock, expect = Decoders}) ->
 	try_decode(IP, Port, Data, State, S, Decoders).
@@ -175,6 +241,20 @@ post_decode(E = #'KRB-ERROR'{'e-data' = EData}, S) when is_binary(EData) ->
 			{E#'KRB-ERROR'{'e-data' = PaDatas2}, S2};
 		_ -> {E, S}
 	end;
+post_decode(R = #'KDC-REP'{'enc-part' = EP}, S = #state{etype = EType, key = Key}) when is_binary(EP) ->
+	case (catch krb_crypto:decrypt(EType, Key, EP, [{usage, 3}])) of
+		{'EXIT', _} -> {R, S};
+		Plain ->
+			case 'KRB5':decode('EncKDCRepPart', Plain) of
+				{ok, EncPart, _} ->
+					{EncPart2, S2} = post_decode(EncPart, S),
+					{R#'KDC-REP'{'enc-part' = EncPart2}, S2};
+				_ -> {R, S}
+			end
+	end;
+post_decode(R = #'EncKDCRepPart'{flags = <<Flags:32/little>>}, S) ->
+	FlagSet = decode_bit_flags(<<Flags:32/big>>, ?ticket_flags),
+	{R#'EncKDCRepPart'{flags = sets:to_list(FlagSet)}, S};
 post_decode(Rec, S) -> {Rec, S}.
 
 datetime_to_krbtime({{Y, M, D}, {Hr, Min, Sec}}) ->
