@@ -7,20 +7,23 @@
 
 -define(kdc_flags, [validate, renew, skip, enc_tkt_in_skey, renewable_ok, disable_transited, {skip, 14}, hw_auth, skip, pk_cross, renewable, skip, postdated, allow_postdate, proxy, proxiable, forwarded, forwardable, skip]).
 
+-define(ticket_flags, [{skip, 18}, delegate, transited, hw_auth, pre_auth, initial, renewable, invalid, postdated, allow_postdate, proxy, proxiable, forwarded, forwardable, skip]).
+
 main([]) ->
 	Now = {_, _, USec} = os:timestamp(),
 	NowKrb = datetime_to_krbtime(calendar:now_to_universal_time(Now)),
 	Options = sets:from_list([renewable]),
-	Cipher = des_md4,
+	<<Flags:32/big>> = encode_bit_flags(Options, ?kdc_flags),
+	Cipher = aes256_hmac_sha1,
 	ReqBody = #'KDC-REQ-BODY'{
-		'kdc-options' = encode_bit_flags(Options, ?kdc_flags),
+		'kdc-options' = <<Flags:32/little>>,
 		cname = #'PrincipalName'{'name-type' = 1, 'name-string' = ["s7654321"]},
 		sname = #'PrincipalName'{'name-type' = 2, 'name-string' = ["krbtgt", "KRB5.UQ.EDU.AU"]},
 		realm = "KRB5.UQ.EDU.AU",
 		%from = NowKrb,
 		till = datetime_to_krbtime(calendar:now_to_universal_time(now_add(Now, 4*3600*1000))),
 		nonce = crypto:rand_uniform(1, 1 bsl 30),
-		etype = [rfc3961:atom_to_etype(X) || X <- [Cipher]]
+		etype = [krb_crypto:atom_to_etype(X) || X <- [Cipher]]
 	},
 	PAEncTs = #'PA-ENC-TS-ENC'{
 		patimestamp = NowKrb,
@@ -30,17 +33,17 @@ main([]) ->
 	io:format("enc-ts = ~s\n", ['KRB5':pretty_print(PAEncTs)]),
 
 	Salt = <<"KRB5.UQ.EDU.AUs7654321">>,
-	Key = rfc3961:string_to_key(Cipher, <<"Itig1234">>, Salt),
+	Key = krb_crypto:string_to_key(Cipher, <<"Itig1234">>, Salt),
 	io:format("using key ~p\n", [Key]),
 	EncData = #'EncryptedData'{
-		etype = rfc3961:atom_to_etype(Cipher),
+		etype = krb_crypto:atom_to_etype(Cipher),
 		kvno = 1,
-		cipher = rfc3961:encrypt(Cipher, Key, PAEncPlain)
+		cipher = krb_crypto:encrypt(Cipher, Key, PAEncPlain)
 	},
 	io:format("encdata = ~s\n", ['KRB5':pretty_print(EncData)]),
 	{ok, PAEnc} = 'KRB5':encode('PA-ENC-TIMESTAMP', EncData),
-	PAData = [#'PA-DATA'{'padata-type' = 2, 'padata-value' = PAEnc},
-			  #'PA-DATA'{'padata-type' = 3, 'padata-value' = Salt}],
+	PAData = [],%#'PA-DATA'{'padata-type' = 2, 'padata-value' = PAEnc},
+			  %#'PA-DATA'{'padata-type' = 3, 'padata-value' = Salt}],
 	Req = #'KDC-REQ'{
 		pvno = 5,
 		'msg-type' = 10,
@@ -51,14 +54,27 @@ main([]) ->
 	{ok, Pkt} = 'KRB5':encode('AS-REQ', Req),
 	{ok, Sock} = gen_udp:open(0, [binary, {active, true}]),
 	ok = gen_udp:send(Sock, "kolanut.cc.uq.edu.au", 88, Pkt),
-	recv(Sock).
+	recv(Sock, Cipher, Key).
 
-recv(Sock) ->
+recv(Sock, Cipher, Key) ->
 	receive
 		{udp, Sock, IP, Port, Pkt} ->
-			io:format("received ~p\n", [Pkt]),
 			case 'KRB5':decode('AS-REP', Pkt) of
-				{ok, Req, <<>>} -> io:format("~s\n", ['KRB5':pretty_print(Req)]);
+				{ok, Req, <<>>} ->
+					io:format("~s\n", ['KRB5':pretty_print(Req)]),
+					EncData = Req#'KDC-REP'.'enc-part',
+					case (catch krb_crypto:decrypt(Cipher, Key, EncData#'EncryptedData'.cipher, [{usage, 3}])) of
+						B when is_binary(B) ->
+							case 'KRB5':decode('EncTGSRepPart', B) of
+								{ok, EncPart, _} ->
+									<<Flags:32/little>> = EncPart#'EncKDCRepPart'.flags,
+									FlagSet = decode_bit_flags(<<Flags:32/big>>, ?ticket_flags),
+									EncPart2 = EncPart#'EncKDCRepPart'{flags = sets:to_list(FlagSet)},
+									io:format("enc-part = ~s\n", ['KRB5':pretty_print(EncPart2)]);
+								Erra -> io:format("~p\n", [Erra])
+							end;
+						_ -> ok
+					end;
 				_ -> ok
 			end,
 			case 'KRB5':decode('KRB-ERROR', Pkt) of
@@ -71,7 +87,7 @@ recv(Sock) ->
 					end;
 				_ -> ok
 			end,
-			recv(Sock)
+			recv(Sock, Cipher, Key)
 	end.
 
 datetime_to_krbtime({{Y, M, D}, {Hr, Min, Sec}}) ->

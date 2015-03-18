@@ -1,4 +1,13 @@
--module(rfc3961).
+%% kerlberos
+%%
+%% Copyright (c) 2015, Alex Wilson and the University of Queensland
+%% All rights reserved.
+%%
+%% Distributed subject to the terms of the 2-clause BSD license, see
+%% the LICENSE file in the root of the distribution.
+
+%% @doc kerberos crypto module (based on rfc3961/3962).
+-module(krb_crypto).
 -export([
 	string_to_key/3,
 	random_to_key/2,
@@ -85,7 +94,7 @@ encrypt_cts_hmac(Cipher, MacType, MacLength, BlockSize, {_Kc, Ke, Ki}, IV, Data)
 	Confounder = crypto:rand_bytes(BlockSize),
 	PreMAC = <<Confounder/binary, Data/binary>>,
 	HMAC = crypto:hmac(MacType, Ki, PreMAC, MacLength),
-	Enc = cts:encrypt(Cipher, Ke, IV, PreMAC),
+	Enc = crypto_cts:encrypt(Cipher, Ke, IV, PreMAC),
 	<<Enc/binary, HMAC/binary>>.
 
 -spec encrypt_orig(atom(), mfa(), integer(), integer(), binary(), binary(), binary()) -> binary().
@@ -101,7 +110,7 @@ encrypt_orig(Cipher, MacFun, MacLength, BlockSize, Key, IV, Data) ->
 decrypt_cts_hmac(Cipher, MacType, MacLength, BlockSize, {_Kc, Ke, Ki}, IV, Data) ->
 	EncLen = byte_size(Data) - MacLength,
 	<<Enc:EncLen/binary, HMAC/binary>> = Data,
-	PreMAC = cts:decrypt(Cipher, Ke, IV, Enc),
+	PreMAC = crypto_cts:decrypt(Cipher, Ke, IV, Enc),
 	HMAC = crypto:hmac(MacType, Ki, PreMAC, MacLength),
 	<<_Confounder:BlockSize/binary, Plain/binary>> = PreMAC,
 	Plain.
@@ -124,7 +133,7 @@ base_key_to_triad(Cipher, BaseKey, Usage) ->
 
 -spec dk(atom(), binary(), binary()) -> binary().
 dk(Cipher, BaseKey, Constant) ->
-	BlockSize = cts:block_size(Cipher) * 8,
+	BlockSize = crypto_cts:block_size(Cipher) * 8,
 	make_dk_bits(Cipher, nfold(BlockSize, Constant), <<>>, bit_size(BaseKey), BaseKey, <<0:BlockSize>>).
 
 to_56bstr(B) ->
@@ -194,7 +203,7 @@ make_dk_bits(_Cipher, _Source, SoFar, N, _Key, _IV) when bit_size(SoFar) >= N ->
 make_dk_bits(Cipher, Source, SoFar, N, Key, IV) ->
 	LastBlock = case SoFar of
 		<<>> -> Source;
-		_ -> binary:part(SoFar, {byte_size(SoFar), -1 * cts:block_size(Cipher)})
+		_ -> binary:part(SoFar, {byte_size(SoFar), -1 * crypto_cts:block_size(Cipher)})
 	end,
 	Block = crypto:block_encrypt(Cipher, Key, IV, LastBlock),
 	make_dk_bits(Cipher, Source, <<SoFar/binary,Block/binary>>, N, Key, IV).
