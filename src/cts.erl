@@ -3,11 +3,15 @@
 -export([encrypt/4, decrypt/4]).
 -export([block_size/1]).
 
+-type cipher() :: aes_cbc128 | aes_cbc256 | des3_cbc | des_cbc.
+
+-spec block_size(cipher()) -> integer().
 block_size(aes_cbc128) -> 16;
 block_size(aes_cbc256) -> 16;
 block_size(des3_cbc) -> 8;
 block_size(des_cbc) -> 8.
 
+-spec encrypt(cipher(), binary(), binary(), binary()) -> binary().
 encrypt(Type, Key, IV0, Plain) ->
     BlockSize = block_size(Type),
     WholeBlocks = byte_size(Plain) div BlockSize,
@@ -32,6 +36,7 @@ encrypt(Type, Key, IV0, Plain) ->
     Cn_1 = crypto:block_encrypt(Type, Key, <<0:BlockSize/unit:8>>, Dn),
     <<CBCPart/binary, Cn_1/binary, Cn/binary>>.
 
+-spec decrypt(cipher(), binary(), binary(), binary()) -> binary().
 decrypt(Type, Key, IV0, Cipher) ->
     BlockSize = block_size(Type),
     WholeBlocks = byte_size(Cipher) div BlockSize,
