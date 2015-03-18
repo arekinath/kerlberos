@@ -1,6 +1,7 @@
 -module(cts).
 
 -export([encrypt/4, decrypt/4]).
+-export([block_size/1]).
 
 block_size(aes_cbc128) -> 16;
 block_size(aes_cbc256) -> 16;
@@ -13,7 +14,7 @@ encrypt(Type, Key, IV0, Plain) ->
     Remainder = byte_size(Plain) rem BlockSize,
     Ln = if (Remainder > 0) -> Remainder; true -> BlockSize end,
     Blocks = if (Remainder > 0) -> WholeBlocks + 1; true -> WholeBlocks end,
-    {CBCPart, Cn_2} = case Blocks of 
+    {CBCPart, Cn_2} = case Blocks of
         B when B > 2 ->
             Initial = crypto:block_encrypt(Type, Key, IV0,
                 binary:part(Plain, {0, (Blocks - 2)*BlockSize})),
@@ -37,7 +38,7 @@ decrypt(Type, Key, IV0, Cipher) ->
     Remainder = byte_size(Cipher) rem BlockSize,
     Ln = if (Remainder > 0) -> Remainder; true -> BlockSize end,
     Blocks = if (Remainder > 0) -> WholeBlocks + 1; true -> WholeBlocks end,
-    {CBCPart, Cn_2} = case Blocks of 
+    {CBCPart, Cn_2} = case Blocks of
         B when B > 2 ->
             Initial = crypto:block_decrypt(Type, Key, IV0,
                 binary:part(Cipher, {0, (Blocks - 2)*BlockSize})),

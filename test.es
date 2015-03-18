@@ -11,7 +11,7 @@ main([]) ->
 	Now = {_, _, USec} = os:timestamp(),
 	NowKrb = datetime_to_krbtime(calendar:now_to_universal_time(Now)),
 	Options = sets:from_list([renewable]),
-	Cipher = des_crc,
+	Cipher = aes256_hmac_sha1,
 	ReqBody = #'KDC-REQ-BODY'{
 		'kdc-options' = encode_bit_flags(Options, ?kdc_flags),
 		cname = #'PrincipalName'{'name-type' = 1, 'name-string' = ["s7654321"]},
@@ -20,7 +20,7 @@ main([]) ->
 		%from = NowKrb,
 		till = datetime_to_krbtime(calendar:now_to_universal_time(now_add(Now, 4*3600*1000))),
 		nonce = crypto:rand_uniform(1, 1 bsl 30),
-		etype = [rfc3961:atom_to_etype(X) || X <- [des_crc, des_md4, des_md5, aes256_hmac_sha1, aes128_hmac_sha1]]
+		etype = [rfc3961:atom_to_etype(X) || X <- [Cipher]]
 	},
 	PAEncTs = #'PA-ENC-TS-ENC'{
 		patimestamp = NowKrb,
@@ -39,8 +39,8 @@ main([]) ->
 	},
 	io:format("encdata = ~s\n", ['KRB5':pretty_print(EncData)]),
 	{ok, PAEnc} = 'KRB5':encode('PA-ENC-TIMESTAMP', EncData),
-	PAData = [],%[#'PA-DATA'{'padata-type' = 2, 'padata-value' = PAEnc},
-			 % #'PA-DATA'{'padata-type' = 3, 'padata-value' = Salt}],
+	PAData = [#'PA-DATA'{'padata-type' = 2, 'padata-value' = PAEnc},
+			  #'PA-DATA'{'padata-type' = 3, 'padata-value' = Salt}],
 	Req = #'KDC-REQ'{
 		pvno = 5,
 		'msg-type' = 10,
