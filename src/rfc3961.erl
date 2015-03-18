@@ -2,8 +2,8 @@
 -export([
 	string_to_key/3,
 	random_to_key/2,
-	encrypt/3,
-	encrypt/4,
+	encrypt/3, encrypt/4,
+	decrypt/3, decrypt/4,
 	atom_to_etype/1,
 	etype_to_atom/1]).
 
@@ -47,9 +47,9 @@ encrypt(Etype, Key, Data) -> encrypt(Etype, Key, Data, []).
 encrypt(des_crc, Key, Data, _Opts) ->
 	encrypt_orig(des_cbc, {?MODULE, crc, []}, 4, 8, Key, Key, Data);
 encrypt(des_md4, Key, Data, _Opts) ->
-	encrypt_orig(des_cbc, {crypto, hash, [md4]}, 8, 8, Key, <<0:64>>, Data);
+	encrypt_orig(des_cbc, {crypto, hash, [md4]}, 16, 8, Key, <<0:64>>, Data);
 encrypt(des_md5, Key, Data, _Opts) ->
-	encrypt_orig(des_cbc, {crypto, hash, [md5]}, 8, 8, Key, <<0:64>>, Data);
+	encrypt_orig(des_cbc, {crypto, hash, [md5]}, 16, 8, Key, <<0:64>>, Data);
 encrypt(aes128_hmac_sha1, Key, Data, Opts) ->
 	Usage = proplists:get_value(usage, Opts, 1),
 	Triad = base_key_to_triad(aes_cbc128, Key, Usage),
@@ -60,6 +60,25 @@ encrypt(aes256_hmac_sha1, Key, Data, Opts) ->
 	encrypt_cts_hmac(aes_cbc256, sha, 12, 16, Triad, <<0:128>>, Data);
 encrypt(E, _, _, _) -> error({unknown_etype, E}).
 
+-spec decrypt(etype(), binary(), binary()) -> binary().
+decrypt(Etype, Key, Data) -> encrypt(Etype, Key, Data, []).
+
+decrypt(des_crc, Key, Data, _Opts) ->
+	decrypt_orig(des_cbc, {?MODULE, crc, []}, 4, 8, Key, Key, Data);
+decrypt(des_md4, Key, Data, _Opts) ->
+	decrypt_orig(des_cbc, {crypto, hash, [md4]}, 16, 8, Key, <<0:64>>, Data);
+decrypt(des_md5, Key, Data, _Opts) ->
+	decrypt_orig(des_cbc, {crypto, hash, [md5]}, 16, 8, Key, <<0:64>>, Data);
+decrypt(aes128_hmac_sha1, Key, Data, Opts) ->
+	Usage = proplists:get_value(usage, Opts, 1),
+	Triad = base_key_to_triad(aes_cbc128, Key, Usage),
+	decrypt_cts_hmac(aes_cbc128, sha, 12, 16, Triad, <<0:128>>, Data);
+decrypt(aes256_hmac_sha1, Key, Data, Opts) ->
+	Usage = proplists:get_value(usage, Opts, 1),
+	Triad = base_key_to_triad(aes_cbc256, Key, Usage),
+	decrypt_cts_hmac(aes_cbc256, sha, 12, 16, Triad, <<0:128>>, Data);
+decrypt(E, _, _, _) -> error({unknown_etype, E}).
+
 -type protocol_key() :: {Kc :: binary(), Ke :: binary(), Ki :: binary()}.
 -spec encrypt_cts_hmac(atom(), atom(), integer(), integer(), protocol_key(), binary(), binary()) -> binary().
 encrypt_cts_hmac(Cipher, MacType, MacLength, BlockSize, {_Kc, Ke, Ki}, IV, Data) ->
@@ -69,15 +88,32 @@ encrypt_cts_hmac(Cipher, MacType, MacLength, BlockSize, {_Kc, Ke, Ki}, IV, Data)
 	Enc = cts:encrypt(Cipher, Ke, IV, PreMAC),
 	<<Enc/binary, HMAC/binary>>.
 
--type mfa() :: {Module :: atom(), Function :: atom(), Arguments :: [term()]}.
 -spec encrypt_orig(atom(), mfa(), integer(), integer(), binary(), binary(), binary()) -> binary().
 encrypt_orig(Cipher, MacFun, MacLength, BlockSize, Key, IV, Data) ->
 	Confounder = crypto:rand_bytes(BlockSize),
 	PreMAC = pad_block(<<Confounder/binary, 0:MacLength/unit:8, Data/binary>>, BlockSize),
 	{MacM, MacF, MacA} = MacFun,
-	MAC = erlang:apply(MacM, MacF, MacA ++ [PreMAC]),
+	MAC = binary:part(erlang:apply(MacM, MacF, MacA ++ [PreMAC]), {0, MacLength}),
 	PostMAC = pad_block(<<Confounder/binary, MAC/binary, Data/binary>>, BlockSize),
 	crypto:block_encrypt(Cipher, Key, IV, PostMAC).
+
+-spec decrypt_cts_hmac(atom(), atom(), integer(), integer(), protocol_key(), binary(), binary()) -> binary().
+decrypt_cts_hmac(Cipher, MacType, MacLength, BlockSize, {_Kc, Ke, Ki}, IV, Data) ->
+	EncLen = byte_size(Data) - MacLength,
+	<<Enc:EncLen/binary, HMAC/binary>> = Data,
+	PreMAC = cts:decrypt(Cipher, Ke, IV, Enc),
+	HMAC = crypto:hmac(MacType, Ki, PreMAC, MacLength),
+	<<_Confounder:BlockSize/binary, Plain/binary>> = PreMAC,
+	Plain.
+
+-spec decrypt_orig(atom(), mfa(), integer(), integer(), binary(), binary(), binary()) -> binary().
+decrypt_orig(Cipher, MacFun, MacLength, BlockSize, Key, IV, Data) ->
+	PostMAC = crypto:block_decrypt(Cipher, Key, IV, Data),
+	<<Confounder:BlockSize/binary, MAC:MacLength/binary, PaddedData/binary>> = PostMAC,
+	PreMAC = <<Confounder/binary, 0:MacLength/unit:8, PaddedData/binary>>,
+	{MacM, MacF, MacA} = MacFun,
+	MAC = binary:part(erlang:apply(MacM, MacF, MacA ++ [PreMAC]), {0, MacLength}),
+	PaddedData.
 
 -spec base_key_to_triad(atom(), binary(), integer()) -> protocol_key().
 base_key_to_triad(Cipher, BaseKey, Usage) ->

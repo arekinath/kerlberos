@@ -11,7 +11,7 @@ main([]) ->
 	Now = {_, _, USec} = os:timestamp(),
 	NowKrb = datetime_to_krbtime(calendar:now_to_universal_time(Now)),
 	Options = sets:from_list([renewable]),
-	Cipher = aes256_hmac_sha1,
+	Cipher = des_md4,
 	ReqBody = #'KDC-REQ-BODY'{
 		'kdc-options' = encode_bit_flags(Options, ?kdc_flags),
 		cname = #'PrincipalName'{'name-type' = 1, 'name-string' = ["s7654321"]},
