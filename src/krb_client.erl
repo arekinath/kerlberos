@@ -12,7 +12,7 @@
 
 -include("KRB5.hrl").
 
--export([init/1, handle_info/3]).
+-export([init/1, handle_info/3, terminate/3]).
 -export([unauthed/2, unauthed/3]).
 -export([probe/2, probe_wait/2, auth/2, auth_wait/2]).
 
@@ -111,6 +111,15 @@ probe(timeout, S = #state{sock = Sock, kdcs = Kdcs, realm = Realm, principal = P
 	ok = gen_udp:send(Sock, Kdc, Port, Pkt),
 	{next_state, probe_wait, S#state{expect = ['KRB-ERROR']}, S#state.timeout}.
 
+probe_wait(Err = #'KRB-ERROR'{'error-code' = 14}, S = #state{auth_client = Client}) ->
+	gen_fsm:reply(Client, {error, no_matching_ciphers}),
+	{next_state, unauthed, S#state{expect = []}};
+
+probe_wait(Err = #'KRB-ERROR'{'error-code' = Code}, S = #state{auth_client = Client}) 
+		when Code == 6; Code == 8; Code == 12 ->
+	gen_fsm:reply(Client, {error, bad_principal}),
+	{next_state, unauthed, S#state{expect = []}};
+
 probe_wait(Err = #'KRB-ERROR'{'error-code' = 25}, S = #state{}) ->
 	io:format("got need-preauth reply\n"),
 	PaDatas = Err#'KRB-ERROR'.'e-data',
@@ -128,7 +137,14 @@ probe_wait(Err = #'KRB-ERROR'{'error-code' = 25}, S = #state{}) ->
 					io:format("preferred cipher = ~p\n", [ETypeAtom]),
 					{next_state, auth, S#state{etype = ETypeAtom, salt = Salt}, 0};
 				[] ->
-					probe_wait(timeout, S)
+					case S#state.cipher_list of
+						[Cipher] ->
+							io:format("server returned no ETYPE-INFO, but we only have one cipher, so we'll try ~p\n", [Cipher]),
+							[User | _] = S#state.principal,
+							{next_state, auth, S#state{etype = Cipher, salt = S#state.realm ++ User}, 0};
+						_ ->
+							probe_wait(timeout, S)
+					end
 			end
 	end;
 
@@ -143,9 +159,9 @@ auth(timeout, S = #state{sock = Sock, kdcs = [Kdc | _], realm = Realm, principal
 	<<Flags:32/big>> = encode_bit_flags(Options, ?kdc_flags),
 	ReqBody = #'KDC-REQ-BODY'{
 		'kdc-options' = <<Flags:32/little>>,
-		cname = #'PrincipalName'{'name-type' = 1, 'name-string' = ["s7654321"]},
-		sname = #'PrincipalName'{'name-type' = 2, 'name-string' = ["krbtgt", "KRB5.UQ.EDU.AU"]},
-		realm = "KRB5.UQ.EDU.AU",
+		cname = #'PrincipalName'{'name-type' = 1, 'name-string' = Principal},
+		sname = #'PrincipalName'{'name-type' = 2, 'name-string' = ["krbtgt", Realm]},
+		realm = Realm,
 		%from = NowKrb,
 		till = datetime_to_krbtime(calendar:now_to_universal_time(now_add(Now, 4*3600*1000))),
 		nonce = Nonce,
@@ -173,10 +189,10 @@ auth(timeout, S = #state{sock = Sock, kdcs = [Kdc | _], realm = Realm, principal
 	{ok, Pkt} = 'KRB5':encode('AS-REQ', Req),
 	{Host, Port} = Kdc,
 	io:format("sending auth request to ~p:~p\n", [Host, Port]),
-	ok = gen_udp:send(Sock, Kdc, Port, Pkt),
+	ok = gen_udp:send(Sock, Host, Port, Pkt),
 	{next_state, auth_wait, S#state{expect = ['AS-REP', 'KRB-ERROR'], key = Key, nonce = Nonce}, S#state.timeout}.
 
-auth_wait(#'KDC-REP'{'enc-part' = EncPart}, S = #state{auth_client = Client, nonce = Nonce}) ->
+auth_wait(R = #'KDC-REP'{'enc-part' = EncPart}, S = #state{auth_client = Client, nonce = Nonce}) ->
 	Now = os:timestamp(),
 	NowKrb = datetime_to_krbtime(calendar:now_to_universal_time(Now)),
 	Valid = case EncPart of
@@ -190,11 +206,17 @@ auth_wait(#'KDC-REP'{'enc-part' = EncPart}, S = #state{auth_client = Client, non
 	case Valid of
 		true ->
 			gen_fsm:reply(Client, ok),
-			{next_state, authed, S#state{expect = []}};
+			% change me
+			{next_state, unauthed, S#state{expect = []}};
 		false ->
 			gen_fsm:reply(Client, {error, invalid_response}),
 			{next_state, unauthed, S#state{expect = []}}
 	end;
+
+auth_wait(Err = #'KRB-ERROR'{'error-code' = Code}, S = #state{auth_client = Client}) 
+		when Code == 24; Code == 31 ->
+	gen_fsm:reply(Client, {error, bad_secret}),
+	{next_state, unauthed, S#state{expect = []}};
 
 auth_wait(Err = #'KRB-ERROR'{}, S = #state{auth_client = Client}) ->
 	gen_fsm:reply(Client, {error, {krb5_error, Err#'KRB-ERROR'.'error-code', Err#'KRB-ERROR'.'e-text'}}),
@@ -206,6 +228,10 @@ auth_wait(timeout, S = #state{auth_client = Client}) ->
 
 handle_info({udp, Sock, IP, Port, Data}, State, S = #state{sock = Sock, expect = Decoders}) ->
 	try_decode(IP, Port, Data, State, S, Decoders).
+
+terminate(Reason, State, #state{sock = Sock}) ->
+	io:format("client terminating in state ~p: ~p\n", [State, Reason]),
+	gen_udp:close(Sock).
 
 try_decode(IP, Port, Data, State, S, []) ->
 	?MODULE:State({packet, IP, Port, Data}, S);
@@ -241,11 +267,11 @@ post_decode(E = #'KRB-ERROR'{'e-data' = EData}, S) when is_binary(EData) ->
 			{E#'KRB-ERROR'{'e-data' = PaDatas2}, S2};
 		_ -> {E, S}
 	end;
-post_decode(R = #'KDC-REP'{'enc-part' = EP}, S = #state{etype = EType, key = Key}) when is_binary(EP) ->
+post_decode(R = #'KDC-REP'{'enc-part' = #'EncryptedData'{cipher = EP}}, S = #state{etype = EType, key = Key}) when is_binary(EP) ->
 	case (catch krb_crypto:decrypt(EType, Key, EP, [{usage, 3}])) of
 		{'EXIT', _} -> {R, S};
 		Plain ->
-			case 'KRB5':decode('EncKDCRepPart', Plain) of
+			case 'KRB5':decode('EncTGSRepPart', Plain) of
 				{ok, EncPart, _} ->
 					{EncPart2, S2} = post_decode(EncPart, S),
 					{R#'KDC-REP'{'enc-part' = EncPart2}, S2};
