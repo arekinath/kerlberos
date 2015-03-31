@@ -88,7 +88,8 @@ main(Mod, User, Class, challenge, Dict, DataChan) ->
 
 main(Mod, User, Class, response, Dict, DataChan) ->
 	{_Challenge, Rem} = read_nullstring(DataChan),
-	{Pw, _} = read_nullstring(DataChan, Rem),
+	{PwLine, _} = read_nullstring(DataChan, Rem),
+	[Pw | _] = binary:split(PwLine, <<"\n">>),
 	Resp = Mod:verify(User, Pw, Class, Dict),
 	respond(Resp, DataChan).
 
