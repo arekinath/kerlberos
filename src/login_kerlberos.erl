@@ -52,6 +52,8 @@ verify(Username, Password, _Class, _Dict) ->
 	case krb_client:authenticate(C, Username, binary_to_list(Password)) of
 		ok ->
 			{true, [{setenv, "KRB5_REALM", Realm}]};
+		{error, Atom} when Atom =:= bad_secret; Atom =:= bad_principal ->
+			{false, [{error, "Login incorrect"}]};
 		{error, Err} ->
-			{false, [{error, io_lib:format("~999p", [Err])}]}
+			{false, [{error, io_lib:format("Kerberos error: ~999p", [Err])}]}
 	end.
