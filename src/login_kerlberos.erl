@@ -41,7 +41,7 @@ verify(Username, Password, _Class, _Dict) ->
 		undefined -> Opts1;
 		KdcList when is_list(KdcList) ->
 			Kdcs = lists:map(fun(E) ->
-				case list:tokens(E, ":") of
+				case string:tokens(E, ":") of
 					[HostPart, PortPart] -> {HostPart, list_to_integer(PortPart)};
 					_ -> E
 				end
