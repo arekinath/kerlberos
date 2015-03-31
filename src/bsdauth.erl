@@ -30,7 +30,7 @@ main(Module, Args) ->
 	case (catch process_args(#args{}, Args)) of
 		{'EXIT', _} -> usage();
 		#args{dict = Dict, service = Service, username = User, class = Class} ->
-			case (catch open_port({fd,3,3}, [in,out,binary,{line,4096}])) of
+			case (catch open_port({fd,3,3}, [in,out,binary,stream])) of
 				{'EXIT', ebadf} ->
 					io:format("failed to open fd 3 in read/write mode\n"),
 					halt(1);
@@ -66,6 +66,17 @@ getpw() ->
 			Pw
 	end.
 
+read_nullstring(Port) -> read_nullstring(Port, <<>>).
+read_nullstring(Port, SoFar) ->
+	case binary:split(SoFar, <<0>>) of
+		[Str, Rest] -> {Str, Rest};
+		_ ->
+			receive
+				{Port, {data, D}} ->
+					read_nullstring(Port, <<SoFar/binary, D/binary>>)
+			end
+	end.
+
 main(Mod, User, Class, login, Dict, DataChan) ->
 	Pw = getpw(),
 	Resp = Mod:verify(User, Pw, Class, Dict),
@@ -76,12 +87,10 @@ main(Mod, User, Class, challenge, Dict, DataChan) ->
 	halt(0);
 
 main(Mod, User, Class, response, Dict, DataChan) ->
-	receive
-		{DataChan, {data, {eol, PwLine}}} ->
-			[Pw | _] = binary:split(PwLine, <<"\n">>),
-			Resp = Mod:verify(User, Pw, Class, Dict),
-			respond(Resp, DataChan)
-	end.
+	{_Challenge, Rem} = read_nullstring(DataChan),
+	{Pw, _} = read_nullstring(DataChan, Rem),
+	Resp = Mod:verify(User, Pw, Class, Dict),
+	respond(Resp, DataChan).
 
 respond(true, DataChan) ->
 	port_command(DataChan, <<"authorize\n">>),
