@@ -33,7 +33,7 @@ open(Realm, Opts) when is_list(Realm) and is_list(Opts) ->
 
 -spec authenticate(krb_client(), string() | [string()], string()) -> ok | {error, term()}.
 authenticate(Client, Principal = [C | _], Secret) when is_list(C); is_binary(C) ->
-	gen_fsm:sync_send_event(Client, {authenticate, Principal, Secret});
+	gen_fsm:sync_send_event(Client, {authenticate, Principal, Secret}, infinity);
 authenticate(Client, Principal, Secret) ->
 	authenticate(Client, [Principal], Secret).
 
@@ -50,7 +50,8 @@ authenticate(Client, Principal, Secret) ->
 	salt :: binary(),
 	key :: binary(),
 	nonce :: integer(),
-	expect :: [atom()]
+	expect :: [atom()],
+	probe_timeouts  :: integer()
 	}).
 
 -define(kdc_flags, [validate, renew, skip, enc_tkt_in_skey, renewable_ok, disable_transited, {skip, 14}, hw_auth, skip, pk_cross, renewable, skip, postdated, allow_postdate, proxy, proxiable, forwarded, forwardable, skip]).
@@ -83,7 +84,7 @@ unauthed(timeout, S = #state{}) ->
 	{next_state, unauthed, S}.
 
 unauthed({authenticate, Principal, Secret}, From, S = #state{}) ->
-	{next_state, probe, S#state{principal = Principal, secret = Secret, auth_client = From}, 0}.
+	{next_state, probe, S#state{principal = Principal, secret = Secret, auth_client = From, probe_timeouts = 0}, 0}.
 
 probe(timeout, S = #state{sock = Sock, kdcs = Kdcs, realm = Realm, principal = Principal, secret = Secret}) ->
 	Now = os:timestamp(),
@@ -107,7 +108,6 @@ probe(timeout, S = #state{sock = Sock, kdcs = Kdcs, realm = Realm, principal = P
 	},
 	{ok, Pkt} = 'KRB5':encode('AS-REQ', Req),
 	[{Kdc, Port} | _] = Kdcs,
-	io:format("sending probe to ~p:~p\n", [Kdc, Port]),
 	ok = gen_udp:send(Sock, Kdc, Port, Pkt),
 	{next_state, probe_wait, S#state{expect = ['KRB-ERROR']}, S#state.timeout}.
 
@@ -115,31 +115,27 @@ probe_wait(Err = #'KRB-ERROR'{'error-code' = 14}, S = #state{auth_client = Clien
 	gen_fsm:reply(Client, {error, no_matching_ciphers}),
 	{next_state, unauthed, S#state{expect = []}};
 
-probe_wait(Err = #'KRB-ERROR'{'error-code' = Code}, S = #state{auth_client = Client}) 
+probe_wait(Err = #'KRB-ERROR'{'error-code' = Code}, S = #state{auth_client = Client})
 		when Code == 6; Code == 8; Code == 12 ->
 	gen_fsm:reply(Client, {error, bad_principal}),
 	{next_state, unauthed, S#state{expect = []}};
 
 probe_wait(Err = #'KRB-ERROR'{'error-code' = 25}, S = #state{}) ->
-	io:format("got need-preauth reply\n"),
 	PaDatas = Err#'KRB-ERROR'.'e-data',
 	case [I || #'PA-DATA'{'padata-type' = 19, 'padata-value' = I} <- PaDatas] of
 		[Etype2s] ->
 			[#'ETYPE-INFO2-ENTRY'{etype = EType, salt = Salt} | _] = Etype2s,
 			ETypeAtom = krb_crypto:etype_to_atom(EType),
-			io:format("preferred cipher = ~p\n", [ETypeAtom]),
 			{next_state, auth, S#state{etype = ETypeAtom, salt = list_to_binary(Salt)}, 0};
 		[] ->
 			case [I || #'PA-DATA'{'padata-type' = 11, 'padata-value' = I} <- PaDatas] of
 				[Etypes] ->
 					[#'ETYPE-INFO-ENTRY'{etype = EType, salt = Salt} | _] = Etypes,
 					ETypeAtom = krb_crypto:etype_to_atom(EType),
-					io:format("preferred cipher = ~p\n", [ETypeAtom]),
 					{next_state, auth, S#state{etype = ETypeAtom, salt = Salt}, 0};
 				[] ->
 					case S#state.cipher_list of
 						[Cipher] ->
-							io:format("server returned no ETYPE-INFO, but we only have one cipher, so we'll try ~p\n", [Cipher]),
 							[User | _] = S#state.principal,
 							{next_state, auth, S#state{etype = Cipher, salt = S#state.realm ++ User}, 0};
 						_ ->
@@ -148,8 +144,11 @@ probe_wait(Err = #'KRB-ERROR'{'error-code' = 25}, S = #state{}) ->
 			end
 	end;
 
-probe_wait(timeout, S = #state{kdcs = [This | Rest]}) ->
-	{next_state, probe, S#state{kdcs = Rest ++ [This]}, 0}.
+probe_wait(timeout, S = #state{kdcs = Kdcs, probe_timeouts = T, auth_client = Client}) when (T > length(Kdcs)) ->
+	gen_fsm:reply(Client, {error, timeout}),
+	{next_state, unauthed, S#state{expect = []}};
+probe_wait(timeout, S = #state{kdcs = [This | Rest], probe_timeouts = T}) ->
+	{next_state, probe, S#state{kdcs = Rest ++ [This], probe_timeouts = T + 1}, 0}.
 
 auth(timeout, S = #state{sock = Sock, kdcs = [Kdc | _], realm = Realm, principal = Principal, secret = Secret, etype = EType, salt = Salt}) ->
 	Now = {_, _, USec} = os:timestamp(),
@@ -188,7 +187,6 @@ auth(timeout, S = #state{sock = Sock, kdcs = [Kdc | _], realm = Realm, principal
 		},
 	{ok, Pkt} = 'KRB5':encode('AS-REQ', Req),
 	{Host, Port} = Kdc,
-	io:format("sending auth request to ~p:~p\n", [Host, Port]),
 	ok = gen_udp:send(Sock, Host, Port, Pkt),
 	{next_state, auth_wait, S#state{expect = ['AS-REP', 'KRB-ERROR'], key = Key, nonce = Nonce}, S#state.timeout}.
 
@@ -213,7 +211,7 @@ auth_wait(R = #'KDC-REP'{'enc-part' = EncPart}, S = #state{auth_client = Client,
 			{next_state, unauthed, S#state{expect = []}}
 	end;
 
-auth_wait(Err = #'KRB-ERROR'{'error-code' = Code}, S = #state{auth_client = Client}) 
+auth_wait(Err = #'KRB-ERROR'{'error-code' = Code}, S = #state{auth_client = Client})
 		when Code == 24; Code == 31 ->
 	gen_fsm:reply(Client, {error, bad_secret}),
 	{next_state, unauthed, S#state{expect = []}};
@@ -230,7 +228,6 @@ handle_info({udp, Sock, IP, Port, Data}, State, S = #state{sock = Sock, expect =
 	try_decode(IP, Port, Data, State, S, Decoders).
 
 terminate(Reason, State, #state{sock = Sock}) ->
-	io:format("client terminating in state ~p: ~p\n", [State, Reason]),
 	gen_udp:close(Sock).
 
 try_decode(IP, Port, Data, State, S, []) ->
@@ -240,7 +237,7 @@ try_decode(IP, Port, Data, State, S, [NextDecoder | Rest]) ->
 		{ok, Record, Leftover} ->
 			case Leftover of
 				<<>> -> ok;
-				_ -> io:format("warning: leftover on ~p: ~p\n", [NextDecoder, Leftover])
+				_ -> ok %io:format("warning: leftover on ~p: ~p\n", [NextDecoder, Leftover])
 			end,
 			{Record2, S2} = post_decode(Record, S),
 			?MODULE:State(Record2, S2);
