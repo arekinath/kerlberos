@@ -11,11 +11,11 @@
 -type opt() :: silent | secure | {setenv, Name :: string(), Value :: string()} | {unsetenv, Name :: string()} | {error, string()}.
 -type opts() :: [opt()].
 
--callback verify(Username :: string(), Password :: binary(), Class :: string(), Dict :: dict:dict()) -> true | false | {true | false, opts()}.
+-callback verify(Username :: string(), Password :: binary(), Class :: string(), Dict :: dict()) -> true | false | {true | false, opts()}.
 
 -export([main/2]).
 
--record(args, {dict = dict:new(), service = login :: atom(), username :: string(), class :: string()}).
+-record(args, {dict = dict:new(), service = login :: atom(), username :: string(), class :: undefined | string()}).
 
 process_args(A, ["-v", DictEntry | Rest]) ->
 	[K | Vs] = string:tokens(DictEntry, "="),
@@ -24,7 +24,9 @@ process_args(A, ["-v", DictEntry | Rest]) ->
 process_args(A, ["-s", Service | Rest]) ->
 	process_args(A#args{service = list_to_existing_atom(Service)}, Rest);
 process_args(A, [Username, Class]) ->
-	A#args{username = Username, class = Class}.
+	A#args{username = Username, class = Class};
+process_args(A, [Username]) ->
+	A#args{username = Username}.
 
 main(Module, Args) ->
 	case (catch process_args(#args{}, Args)) of
