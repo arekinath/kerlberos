@@ -135,11 +135,9 @@ probe_wait(Err = #'KRB-ERROR'{'error-code' = 25}, S = #state{}) ->
 					{next_state, auth, S#state{etype = ETypeAtom, salt = Salt}, 0};
 				[] ->
 					case S#state.cipher_list of
-						[Cipher] ->
+						[Cipher | _] ->
 							[User | _] = S#state.principal,
-							{next_state, auth, S#state{etype = Cipher, salt = S#state.realm ++ User}, 0};
-						_ ->
-							probe_wait(timeout, S#state{probe_timeouts = 0})
+							{next_state, auth, S#state{etype = Cipher, salt = S#state.realm ++ User}, 0}
 					end
 			end
 	end;
