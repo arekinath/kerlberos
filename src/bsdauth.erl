@@ -44,17 +44,21 @@ usage() ->
 	halt(1).
 
 getpw() ->
-	ok = io:setopts([binary]),
-	tty:load_from_zip(),
-	Fd = tty:open_tty(),
-	tty:echo(Fd, 0),
-	Term = open_port({fd,Fd,Fd}, [out,binary,stream]),
-	port_command(Term, <<"Password: ">>),
-	PwLine = io:get_line(<<>>),
+	ok = io:setopts([binary, {echo, false}]),
+	PwLine = io:get_line(<<"Password: ">>),
+	ok = io:setopts([binary, {echo, true}]),
+	io:format("\n"),
 	[Pw | _] = binary:split(PwLine, <<"\n">>),
-	port_command(Term, <<"\n">>),
-	tty:echo(Fd, 1),
-	port_close(Term),
+	% tty:load_from_zip(),
+	% Fd = tty:open_tty(),
+	% tty:echo(Fd, 0),
+	% Term = open_port({fd,Fd,Fd}, [out,binary,stream]),
+	% port_command(Term, <<"Password: ">>),
+	% PwLine = io:get_line(<<>>),
+	% [Pw | _] = binary:split(PwLine, <<"\n">>),
+	% port_command(Term, <<"\n">>),
+	% tty:echo(Fd, 1),
+	% port_close(Term),
 	Pw.
 
 main(Mod, User, Class, login, Dict, DataChan) ->
