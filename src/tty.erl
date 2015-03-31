@@ -12,7 +12,10 @@
 
 load_from_zip() ->
 	SoName = "/tmp/tty-" ++ os:getpid(),
-	{ok, Data, _} = erl_prim_loader:get_file("login_kerlberos/tty.so"),
+	PathToMe = filename:split(code:which(tty)),
+	BasePath = lists:sublist(PathToMe, length(PathToMe) - 3),
+	Path = filename:join(BasePath ++ ["tty.so"]),
+	{ok, Data, _} = erl_prim_loader:get_file(Path),
 	ok = file:write_file(SoName ++ ".so", Data),
 	ok = erlang:load_nif(SoName, 0),
 	ok = file:delete(SoName ++ ".so").
