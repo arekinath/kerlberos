@@ -12,7 +12,8 @@
 
 load_from_zip() ->
 	SoName = "/tmp/tty-" ++ os:getpid(),
-	{ok, _} = file:copy("priv/tty.so", SoName ++ ".so"),
+	{ok, Data, _} = erl_prim_loader:get_file("priv/tty.so"),
+	ok = file:write_file(SoName ++ ".so", Data),
 	ok = erlang:load_nif(SoName, 0),
 	ok = file:delete(SoName ++ ".so").
 
