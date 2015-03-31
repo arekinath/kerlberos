@@ -43,6 +43,12 @@ usage() ->
 	io:format("intended to be used with the BSD auth framework\n"),
 	halt(1).
 
+-define(OP_PUTC,0).
+-define(OP_MOVE,1).
+-define(OP_INSC,2).
+-define(OP_DELC,3).
+-define(OP_BEEP,4).
+
 getpw() ->
 	case io:setopts([binary, {echo, false}]) of
 		ok ->
@@ -52,18 +58,15 @@ getpw() ->
 			[Pw | _] = binary:split(PwLine, <<"\n">>),
 			Pw;
 		_ ->
-			ok = io:setopts([binary]),
-			tty:load_from_zip(),
-			Fd = tty:open_tty(),
-			tty:echo(Fd, 0),
-			Term = open_port({fd,Fd,Fd}, [out,binary,stream]),
-			port_command(Term, <<"Password: ">>),
-			PwLine = io:get_line(<<>>),
-			[Pw | _] = binary:split(PwLine, <<"\n">>),
-			port_command(Term, <<"\n">>),
-			tty:echo(Fd, 1),
-			port_close(Term),
-			Pw
+			Port = open_port({spawn, 'tty_sl -e'}, [binary, eof]),
+			port_command(Port, <<?OP_PUTC, "Password:">>),
+			receive
+				{Port, {data, PwLine}} ->
+					[Pw | _] = binary:split(PwLine, <<"\n">>),
+					port_command(Port, <<?OP_PUTC, $\n>>),
+					port_close(Port),
+					Pw
+			end
 	end.
 
 read_nullstring(Port) -> read_nullstring(Port, <<>>).
