@@ -262,7 +262,7 @@ post_decode(E = #'KRB-ERROR'{'e-data' = EData}, S) when is_binary(EData) ->
 			{E#'KRB-ERROR'{'e-data' = PaDatas2}, S2};
 		_ -> {E, S}
 	end;
-post_decode(R = #'KDC-REP'{'enc-part' = #'EncryptedData'{cipher = EP}}, S = #state{etype = EType, key = Key}) when is_binary(EP) ->
+post_decode(R = #'KDC-REP'{'enc-part' = #'EncryptedData'{etype = EType, cipher = EP}}, S = #state{etype = EType, key = Key}) when is_binary(EP) ->
 	case (catch krb_crypto:decrypt(EType, Key, EP, [{usage, 3}])) of
 		{'EXIT', _} -> {R, S};
 		Plain ->
