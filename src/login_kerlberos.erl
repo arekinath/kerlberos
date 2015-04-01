@@ -9,15 +9,17 @@
 -module(login_kerlberos).
 -behaviour(bsdauth).
 
--export([main/1, verify/4]).
+-export([main/1, can_handle/3, verify/4]).
 
 main(Args) -> bsdauth:main(?MODULE, Args).
 
-verify(Username, Password, _Class, _Dict) ->
-	Config = case conf_parse:file("/etc/kerlberos.conf") of
+config() ->
+	case conf_parse:file("/etc/kerlberos.conf") of
 		{error, enoent} -> [];
 		ConfPlist -> ConfPlist
-	end,
+	end.
+
+open_client(Config) ->
 	Realm = case proplists:get_value(["realm"], Config) of
 		undefined ->
 			{ok, Host} = inet:gethostname(),
@@ -48,9 +50,37 @@ verify(Username, Password, _Class, _Dict) ->
 			end, KdcList),
 			[{kdc, Kdcs} | Opts1]
 	end,
-	{ok, C} = krb_client:open(Realm, Opts2),
+	krb_client:open(Realm, Opts2).
+
+check_user_exists(Username, Config) ->
+	case proplists:get_value(["users","fallback"], Config, "true") of
+		V when V =:= "true"; V =:= "yes" ->
+			{ok, C} = open_client(Config),
+			case krb_client:authenticate(C, Username, "-") of
+				{error, bad_principal} -> false;
+				{error, _} -> true
+			end;
+		_ -> false
+	end.
+
+can_handle(Username, _Class, _Dict) ->
+	Config = config(),
+	case proplists:get_all_values(["users","blacklist"], Config) of
+		L when is_list(L) ->
+			Blacklist = lists:flatmap(fun(X) -> string:tokens(X, ", ") end, L),
+			case lists:member(Username, Blacklist) of
+				true -> false;
+				_ -> check_user_exists(Username, Config)
+			end;
+		_ -> check_user_exists(Username, Config)
+	end.
+
+verify(Username, Password, _Class, _Dict) ->
+	Config = config(),
+	{ok, C} = open_client(Config),
 	case krb_client:authenticate(C, Username, binary_to_list(Password)) of
 		ok ->
+			Realm = string:to_upper(proplists:get_value(["realm"], Config, "default")),
 			{true, [{setenv, "KRB5_REALM", Realm}]};
 		{error, Atom} when Atom =:= bad_secret; Atom =:= bad_principal ->
 			{false, [{error, "Login incorrect"}]};

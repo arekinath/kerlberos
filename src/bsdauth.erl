@@ -11,6 +11,7 @@
 -type opt() :: silent | secure | {setenv, Name :: string(), Value :: string()} | {unsetenv, Name :: string()} | {error, string()}.
 -type opts() :: [opt()].
 
+-callback can_handle(Username :: string(), Class :: string(), Dict :: dict()) -> true | false.
 -callback verify(Username :: string(), Password :: binary(), Class :: string(), Dict :: dict()) -> true | false | {true | false, opts()}.
 
 -export([main/2]).
@@ -83,13 +84,21 @@ read_nullstring(Port, SoFar) ->
 	end.
 
 main(Mod, User, Class, login, Dict, DataChan) ->
-	Pw = getpw(),
-	Resp = Mod:verify(User, Pw, Class, Dict),
-	respond(Resp, DataChan);
+	case Mod:can_handle(User, Class, Dict) of
+		false -> halt(1);
+		true ->
+			Pw = getpw(),
+			Resp = Mod:verify(User, Pw, Class, Dict),
+			respond(Resp, DataChan)
+	end;
 
 main(Mod, User, Class, challenge, Dict, DataChan) ->
-	port_command(DataChan, <<"reject silent\n">>),
-	halt(0);
+	case Mod:can_handle(User, Class, Dict) of
+		false -> halt(1);
+		true ->
+			port_command(DataChan, <<"reject silent\n">>),
+			halt(0)
+	end;
 
 main(Mod, User, Class, response, Dict, DataChan) ->
 	{_Challenge, Rem} = read_nullstring(DataChan),
