@@ -85,7 +85,7 @@ read_nullstring(Port, SoFar) ->
 
 main(Mod, User, Class, login, Dict, DataChan) ->
 	case Mod:can_handle(User, Class, Dict) of
-		false -> halt(1);
+		false -> halt(0);
 		true ->
 			Pw = getpw(),
 			Resp = Mod:verify(User, Pw, Class, Dict),
@@ -94,7 +94,7 @@ main(Mod, User, Class, login, Dict, DataChan) ->
 
 main(Mod, User, Class, challenge, Dict, DataChan) ->
 	case Mod:can_handle(User, Class, Dict) of
-		false -> halt(1);
+		false -> halt(0);
 		true ->
 			port_command(DataChan, <<"reject silent\n">>),
 			halt(0)
