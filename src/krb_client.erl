@@ -11,6 +11,7 @@
 -behaviour(gen_fsm).
 
 -include("KRB5.hrl").
+-include("krb_errors.hrl").
 
 -export([init/1, handle_info/3, terminate/3]).
 -export([unauthed/2, unauthed/3]).
@@ -39,7 +40,8 @@ authenticate(Client, Principal, Secret) ->
 
 -record(state, {
 	kdcs :: [{inet:ip_address() | inet:hostname(), Port :: integer()}],
-	sock :: gen_udp:socket(),
+	usock :: gen_udp:socket(),
+	tsock :: gen_tcp:socket(),
 	realm :: string(),
 	principal :: [binary()],
 	secret :: binary(),
@@ -54,9 +56,24 @@ authenticate(Client, Principal, Secret) ->
 	probe_timeouts  :: integer()
 	}).
 
--define(kdc_flags, [validate, renew, skip, enc_tkt_in_skey, renewable_ok, disable_transited, {skip, 14}, hw_auth, skip, pk_cross, renewable, skip, postdated, allow_postdate, proxy, proxiable, forwarded, forwardable, skip]).
+-define(kdc_flags, [skip,forwardable,forwarded,proxiable,proxy,allow_postdate,postdated,skip,renewable,pk_cross,skip,hw_auth,{skip,14},disable_transited,renewable_ok,enc_tkt_in_skey,skip,renew,validate]).
 
--define(ticket_flags, [{skip, 18}, delegate, transited, hw_auth, pre_auth, initial, renewable, invalid, postdated, allow_postdate, proxy, proxiable, forwarded, forwardable, skip]).
+-define(ticket_flags, [skip,forwardable,forwarded,proxiable,proxy,allow_postdate,postdated,invalid,renewable,initial,pre_auth,hw_auth,transited,delegate,{skip,18}]).
+
+send_kdc_pkt(Data, S = #state{tsock = undefined, usock = Sock, kdcs = [{Kdc, Port} | _]}) ->
+	ok = gen_udp:send(Sock, Kdc, Port, Data);
+send_kdc_pkt(Data, S = #state{tsock = Sock}) ->
+	ok = gen_tcp:send(Sock, <<0:1,(byte_size(Data)):31/big,Data/binary>>).
+
+retry_connect(IP, Port, Opts, Timeout) ->
+	retry_connect(IP, Port, Opts, Timeout div 3, 3).
+retry_connect(IP, Port, Opts, Timeout, Retries) ->
+	case gen_tcp:connect(IP, Port, Opts, Timeout) of
+		R = {ok, _} -> R;
+		{error, timeout} when Retries > 0 ->
+			retry_connect(IP, Port, Opts, Timeout, Retries - 1);
+		R = {error, _} -> R
+	end.
 
 lookup_kdcs(Domain) ->
     Results = inet_res:lookup("_kerberos._udp." ++ Domain, in, srv),
@@ -77,7 +94,7 @@ init([Realm, Opts]) ->
 		Host -> [{Host, KdcPort}]
 	end,
 	{ok, Sock} = gen_udp:open(0, [binary, {active, true}]),
-	{ok, unauthed, #state{realm = Realm, kdcs = Kdcs, sock = Sock, cipher_list = CipherList, timeout = Timeout}, 0}.
+	{ok, unauthed, #state{realm = Realm, kdcs = Kdcs, usock = Sock, cipher_list = CipherList, timeout = Timeout}, 0}.
 
 unauthed(timeout, S = #state{}) ->
 	% check in cc for existing tgt
@@ -86,12 +103,11 @@ unauthed(timeout, S = #state{}) ->
 unauthed({authenticate, Principal, Secret}, From, S = #state{}) ->
 	{next_state, probe, S#state{principal = Principal, secret = Secret, auth_client = From, probe_timeouts = 0}, 0}.
 
-probe(timeout, S = #state{sock = Sock, kdcs = Kdcs, realm = Realm, principal = Principal, secret = Secret}) ->
+probe(timeout, S = #state{kdcs = Kdcs, realm = Realm, principal = Principal, secret = Secret}) ->
 	Now = os:timestamp(),
-	Options = sets:from_list([renewable]),
-	<<Flags:32/big>> = encode_bit_flags(Options, ?kdc_flags),
+	Options = sets:from_list([renewable,proxiable,forwardable]),
 	ReqBody = #'KDC-REQ-BODY'{
-		'kdc-options' = <<Flags:32/little>>,
+		'kdc-options' = encode_bit_flags(Options, ?kdc_flags),
 		cname = #'PrincipalName'{'name-type' = 1, 'name-string' = Principal},
 		sname = #'PrincipalName'{'name-type' = 2, 'name-string' = ["krbtgt", Realm]},
 		realm = Realm,
@@ -107,20 +123,28 @@ probe(timeout, S = #state{sock = Sock, kdcs = Kdcs, realm = Realm, principal = P
 		'req-body' = ReqBody
 	},
 	{ok, Pkt} = 'KRB5':encode('AS-REQ', Req),
-	[{Kdc, Port} | _] = Kdcs,
-	ok = gen_udp:send(Sock, Kdc, Port, Pkt),
+	ok = send_kdc_pkt(Pkt, S),
 	{next_state, probe_wait, S#state{expect = ['KRB-ERROR']}, S#state.timeout}.
 
-probe_wait(Err = #'KRB-ERROR'{'error-code' = 14}, S = #state{auth_client = Client}) ->
+probe_wait(Err = #'KRB-ERROR'{'error-code' = ?KDC_ERR_ETYPE_NOSUPP}, S = #state{auth_client = Client}) ->
 	gen_fsm:reply(Client, {error, no_matching_ciphers}),
 	{next_state, unauthed, S#state{expect = []}};
 
+probe_wait(Err = #'KRB-ERROR'{'error-code' = ?KRB_ERR_RESPONSE_TOO_BIG}, S = #state{kdcs = [{Kdc, Port} | _], timeout = T}) ->
+	case retry_connect(Kdc, Port, [{active, true}, binary, {packet, 4}, {nodelay, true}], T) of
+		{ok, Sock} ->
+			ok = inet:setopts(S#state.usock, [{active, false}]),
+			{next_state, probe, S#state{tsock = Sock}, 0};
+		_ ->
+			probe_wait(timeout, S)
+	end;
+
 probe_wait(Err = #'KRB-ERROR'{'error-code' = Code}, S = #state{auth_client = Client})
-		when Code == 6; Code == 8; Code == 12 ->
+		when Code == ?KDC_ERR_C_PRINCIPAL_UNKNOWN; Code == ?KDC_ERR_PRINCIPAL_NOT_UNIQUE; Code == ?KDC_ERR_POLICY ->
 	gen_fsm:reply(Client, {error, bad_principal}),
 	{next_state, unauthed, S#state{expect = []}};
 
-probe_wait(Err = #'KRB-ERROR'{'error-code' = 25}, S = #state{}) ->
+probe_wait(Err = #'KRB-ERROR'{'error-code' = ?KDC_ERR_PREAUTH_REQUIRED}, S = #state{}) ->
 	PaDatas = Err#'KRB-ERROR'.'e-data',
 	case [I || #'PA-DATA'{'padata-type' = 19, 'padata-value' = I} <- PaDatas] of
 		[Etype2s] ->
@@ -146,16 +170,22 @@ probe_wait(timeout, S = #state{kdcs = Kdcs, probe_timeouts = T, auth_client = Cl
 	gen_fsm:reply(Client, {error, timeout}),
 	{next_state, unauthed, S#state{expect = []}};
 probe_wait(timeout, S = #state{kdcs = [This | Rest], probe_timeouts = T}) ->
-	{next_state, probe, S#state{kdcs = Rest ++ [This], probe_timeouts = T + 1}, 0}.
+	S2 = case S#state.tsock of
+		undefined -> S;
+		Sock ->
+			gen_tcp:close(Sock),
+			ok = inet:setopts(S#state.usock, [{active, true}]),
+			S#state{tsock = undefined}
+	end,
+	{next_state, probe, S2#state{kdcs = Rest ++ [This], probe_timeouts = T + 1}, 0}.
 
-auth(timeout, S = #state{sock = Sock, kdcs = [Kdc | _], realm = Realm, principal = Principal, secret = Secret, etype = EType, salt = Salt}) ->
+auth(timeout, S = #state{kdcs = [Kdc | _], realm = Realm, principal = Principal, secret = Secret, etype = EType, salt = Salt}) ->
 	Now = {_, _, USec} = os:timestamp(),
 	NowKrb = datetime_to_krbtime(calendar:now_to_universal_time(Now)),
-	Options = sets:from_list([renewable]),
+	Options = sets:from_list([forwardable,proxiable,renewable]),
 	Nonce = crypto:rand_uniform(1, 1 bsl 31),
-	<<Flags:32/big>> = encode_bit_flags(Options, ?kdc_flags),
 	ReqBody = #'KDC-REQ-BODY'{
-		'kdc-options' = <<Flags:32/little>>,
+		'kdc-options' = encode_bit_flags(Options, ?kdc_flags),
 		cname = #'PrincipalName'{'name-type' = 1, 'name-string' = Principal},
 		sname = #'PrincipalName'{'name-type' = 2, 'name-string' = ["krbtgt", Realm]},
 		realm = Realm,
@@ -175,8 +205,8 @@ auth(timeout, S = #state{sock = Sock, kdcs = [Kdc | _], realm = Realm, principal
 		cipher = krb_crypto:encrypt(EType, Key, PAEncPlain, [{usage, 1}])
 	},
 	{ok, PAEnc} = 'KRB5':encode('PA-ENC-TIMESTAMP', EncData),
-	PAData = [#'PA-DATA'{'padata-type' = 2, 'padata-value' = PAEnc},
-			  #'PA-DATA'{'padata-type' = 3, 'padata-value' = Salt}],
+	PAData = [#'PA-DATA'{'padata-type' = 2, 'padata-value' = PAEnc}],
+			  %#'PA-DATA'{'padata-type' = 3, 'padata-value' = Salt}],
 	Req = #'KDC-REQ'{
 		pvno = 5,
 		'msg-type' = 10,
@@ -184,9 +214,11 @@ auth(timeout, S = #state{sock = Sock, kdcs = [Kdc | _], realm = Realm, principal
 		'req-body' = ReqBody
 		},
 	{ok, Pkt} = 'KRB5':encode('AS-REQ', Req),
-	{Host, Port} = Kdc,
-	ok = gen_udp:send(Sock, Host, Port, Pkt),
+	send_kdc_pkt(Pkt, S),
 	{next_state, auth_wait, S#state{expect = ['AS-REP', 'KRB-ERROR'], key = Key, nonce = Nonce}, S#state.timeout}.
+
+auth_wait({packet, <<>>}, S = #state{timeout = T}) ->
+	{next_state, auth_wait, S, T};
 
 auth_wait(R = #'KDC-REP'{'enc-part' = EncPart}, S = #state{auth_client = Client, nonce = Nonce}) ->
 	Now = os:timestamp(),
@@ -209,8 +241,17 @@ auth_wait(R = #'KDC-REP'{'enc-part' = EncPart}, S = #state{auth_client = Client,
 			{next_state, unauthed, S#state{expect = []}}
 	end;
 
+auth_wait(Err = #'KRB-ERROR'{'error-code' = ?KRB_ERR_RESPONSE_TOO_BIG}, S = #state{kdcs = [{Kdc, Port} | _], timeout = T}) ->
+	case retry_connect(Kdc, Port, [{active, true}, binary, {packet, 4}, {nodelay, true}], T) of
+		{ok, Sock} ->
+			ok = inet:setopts(S#state.usock, [{active, false}]),
+			{next_state, auth, S#state{tsock = Sock}, 0};
+		_ ->
+			auth_wait(timeout, S)
+	end;
+
 auth_wait(Err = #'KRB-ERROR'{'error-code' = Code}, S = #state{auth_client = Client})
-		when Code == 24; Code == 31 ->
+		when Code == ?KDC_ERR_PREAUTH_FAILED; Code == ?KRB_AP_ERR_BAD_INTEGRITY ->
 	gen_fsm:reply(Client, {error, bad_secret}),
 	{next_state, unauthed, S#state{expect = []}};
 
@@ -220,17 +261,41 @@ auth_wait(Err = #'KRB-ERROR'{}, S = #state{auth_client = Client}) ->
 
 auth_wait(timeout, S = #state{auth_client = Client}) ->
 	gen_fsm:reply(Client, {error, timeout}),
-	{next_state, unauthed, S#state{expect = []}}.
+	S2 = case S#state.tsock of
+		undefined -> S;
+		Sock ->
+			gen_tcp:close(Sock),
+			ok = inet:setopts(S#state.usock, [{active, true}]),
+			S#state{tsock = undefined}
+	end,
+	{next_state, unauthed, S2#state{expect = []}}.
 
-handle_info({udp, Sock, IP, Port, Data}, State, S = #state{sock = Sock, expect = Decoders}) ->
+handle_info({tcp_closed, Sock}, State, S = #state{tsock = Sock}) ->
+	?MODULE:State(timeout, S);
+handle_info({tcp, Sock, Data}, State, S = #state{tsock = Sock, expect = Decoders}) ->
+	try_decode(Data, State, S, Decoders);
+handle_info({udp, Sock, IP, Port, Data}, State, S = #state{expect = Decoders}) ->
 	try_decode(IP, Port, Data, State, S, Decoders).
 
-terminate(Reason, State, #state{sock = Sock}) ->
-	gen_udp:close(Sock).
+terminate(Reason, State, S = #state{tsock = Sock}) when Sock =/= undefined ->
+	gen_tcp:close(Sock),
+	terminate(Reason, State, S#state{tsock = undefined});
+terminate(Reason, State, S = #state{usock = Sock}) when Sock =/= undefined ->
+	gen_udp:close(Sock),
+	terminate(Reason, State, S#state{usock = undefined});
+terminate(Reason, State, S = #state{}) ->
+	ok.
 
-try_decode(IP, Port, Data, State, S, []) ->
-	?MODULE:State({packet, IP, Port, Data}, S);
-try_decode(IP, Port, Data, State, S, [NextDecoder | Rest]) ->
+try_decode(IP, Port, Data, State, S, Decoders) ->
+	try_decode({packet, IP, Port, Data}, Data, State, S, Decoders).
+try_decode(Data, State, S, Decoders) ->
+	try_decode({packet, Data}, Data, State, S, Decoders).
+
+try_decode(FallbackMsg, Data, State, S, _) when byte_size(Data) == 0 ->
+	?MODULE:State(FallbackMsg, S);
+try_decode(FallbackMsg, Data, State, S, []) ->
+	?MODULE:State(FallbackMsg, S);
+try_decode(FallbackMsg, Data, State, S, [NextDecoder | Rest]) ->
 	case 'KRB5':decode(NextDecoder, Data) of
 		{ok, Record, Leftover} ->
 			case Leftover of
@@ -240,7 +305,7 @@ try_decode(IP, Port, Data, State, S, [NextDecoder | Rest]) ->
 			{Record2, S2} = post_decode(Record, S),
 			?MODULE:State(Record2, S2);
 		_ ->
-			try_decode(IP, Port, Data, State, S, Rest)
+			try_decode(FallbackMsg, Data, State, S, Rest)
 	end.
 
 post_decode(Pa = #'PA-DATA'{'padata-type' = 11, 'padata-value' = Bin}, S) when is_binary(Bin) ->
@@ -274,8 +339,8 @@ post_decode(R = #'KDC-REP'{'enc-part' = #'EncryptedData'{etype = ETypeId, cipher
 				_ -> {R, S}
 			end
 	end;
-post_decode(R = #'EncKDCRepPart'{flags = <<Flags:32/little>>}, S) ->
-	FlagSet = decode_bit_flags(<<Flags:32/big>>, ?ticket_flags),
+post_decode(R = #'EncKDCRepPart'{flags = Flags}, S) ->
+	FlagSet = decode_bit_flags(Flags, ?ticket_flags),
 	{R#'EncKDCRepPart'{flags = sets:to_list(FlagSet)}, S};
 post_decode(Rec, S) -> {Rec, S}.
 
