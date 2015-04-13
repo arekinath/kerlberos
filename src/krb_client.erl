@@ -63,7 +63,7 @@ authenticate(Client, Principal, Secret) ->
 send_kdc_pkt(Data, S = #state{tsock = undefined, usock = Sock, kdcs = [{Kdc, Port} | _]}) ->
 	ok = gen_udp:send(Sock, Kdc, Port, Data);
 send_kdc_pkt(Data, S = #state{tsock = Sock}) ->
-	ok = gen_tcp:send(Sock, <<0:1,(byte_size(Data)):31/big,Data/binary>>).
+	ok = gen_tcp:send(Sock, Data).
 
 retry_connect(IP, Port, Opts, Timeout) ->
 	retry_connect(IP, Port, Opts, Timeout div 3, 3).
@@ -224,9 +224,13 @@ auth_wait(R = #'KDC-REP'{'enc-part' = EncPart}, S = #state{auth_client = Client,
 	Now = os:timestamp(),
 	NowKrb = datetime_to_krbtime(calendar:now_to_universal_time(Now)),
 	Valid = case EncPart of
-		#'EncKDCRepPart'{nonce = Nonce, endtime = End} ->
+		#'EncKDCRepPart'{nonce = Nonce, endtime = End, flags = Flags} ->
 			if
-				(End > NowKrb) -> true;
+				(End > NowKrb) ->
+					case [lists:member(X, Flags) || X <- [pre_auth,initial]] of
+						[true, true] -> true;
+						_ -> false
+					end;
 				true -> false
 			end;
 		_ -> false
@@ -327,16 +331,27 @@ post_decode(E = #'KRB-ERROR'{'e-data' = EData}, S) when is_binary(EData) ->
 			{E#'KRB-ERROR'{'e-data' = PaDatas2}, S2};
 		_ -> {E, S}
 	end;
-post_decode(R = #'KDC-REP'{'enc-part' = #'EncryptedData'{etype = ETypeId, cipher = EP}}, S = #state{etype = EType, key = Key}) when is_binary(EP) ->
+post_decode(R = #'KDC-REP'{'enc-part' = #'EncryptedData'{etype = ETypeId, kvno = KvNo, cipher = EP}}, S = #state{etype = EType, key = Key}) when is_binary(EP) ->
+	Usage = case KvNo of
+		N when is_integer(N) -> N;
+		_ -> 3
+	end,
 	Etype = krb_crypto:etype_to_atom(ETypeId),
-	case (catch krb_crypto:decrypt(EType, Key, EP, [{usage, 3}])) of
+	case (catch krb_crypto:decrypt(EType, Key, EP, [{usage, Usage}])) of
 		{'EXIT', _} -> {R, S};
 		Plain ->
 			case 'KRB5':decode('EncTGSRepPart', Plain) of
 				{ok, EncPart, _} ->
 					{EncPart2, S2} = post_decode(EncPart, S),
 					{R#'KDC-REP'{'enc-part' = EncPart2}, S2};
-				_ -> {R, S}
+				_ ->
+					case 'KRB5':decode('EncASRepPart', Plain) of
+						{ok, EncPart, _} ->
+							{EncPart2, S2} = post_decode(EncPart, S),
+							{R#'KDC-REP'{'enc-part' = EncPart2}, S2};
+						_ ->
+							{R, S}
+					end
 			end
 	end;
 post_decode(R = #'EncKDCRepPart'{flags = Flags}, S) ->
