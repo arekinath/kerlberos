@@ -81,7 +81,7 @@ lookup_kdcs(Domain) ->
 
 init([Realm, Opts]) ->
 	KdcPort = proplists:get_value(port, Opts, 88),
-	CipherList = proplists:get_value(ciphers, Opts, [aes256_hmac_sha1, aes128_hmac_sha1, des_md5, des_md4, des_crc]),
+	CipherList = proplists:get_value(ciphers, Opts, [aes256_hmac_sha1, aes128_hmac_sha1, rc4_hmac, des_md5, des_md4, des_crc]),
 	Timeout = proplists:get_value(timeout, Opts, 1000),
 	Kdcs = case proplists:get_value(kdc, Opts) of
 		undefined -> lookup_kdcs(string:to_lower(Realm));
@@ -150,7 +150,8 @@ probe_wait(Err = #'KRB-ERROR'{'error-code' = ?KDC_ERR_PREAUTH_REQUIRED}, S = #st
 		[Etype2s] ->
 			[#'ETYPE-INFO2-ENTRY'{etype = EType, salt = Salt} | _] = Etype2s,
 			ETypeAtom = krb_crypto:etype_to_atom(EType),
-			{next_state, auth, S#state{etype = ETypeAtom, salt = list_to_binary(Salt)}, 0};
+			SaltBin = case ETypeAtom of rc4_hmac -> <<>>; _ -> list_to_binary(Salt) end,
+			{next_state, auth, S#state{etype = ETypeAtom, salt = SaltBin}, 0};
 		[] ->
 			case [I || #'PA-DATA'{'padata-type' = 11, 'padata-value' = I} <- PaDatas] of
 				[Etypes] ->
@@ -332,12 +333,8 @@ post_decode(E = #'KRB-ERROR'{'e-data' = EData}, S) when is_binary(EData) ->
 		_ -> {E, S}
 	end;
 post_decode(R = #'KDC-REP'{'enc-part' = #'EncryptedData'{etype = ETypeId, kvno = KvNo, cipher = EP}}, S = #state{etype = EType, key = Key}) when is_binary(EP) ->
-	Usage = case KvNo of
-		N when is_integer(N) -> N;
-		_ -> 3
-	end,
 	Etype = krb_crypto:etype_to_atom(ETypeId),
-	case (catch krb_crypto:decrypt(EType, Key, EP, [{usage, Usage}])) of
+	case (catch krb_crypto:decrypt(EType, Key, EP, [{usage, 3}])) of
 		{'EXIT', _} -> {R, S};
 		Plain ->
 			case 'KRB5':decode('EncTGSRepPart', Plain) of
@@ -350,7 +347,30 @@ post_decode(R = #'KDC-REP'{'enc-part' = #'EncryptedData'{etype = ETypeId, kvno =
 							{EncPart2, S2} = post_decode(EncPart, S),
 							{R#'KDC-REP'{'enc-part' = EncPart2}, S2};
 						_ ->
-							{R, S}
+							% HACK ALERT
+							% microsoft's older krb5 implementations often chop off the front of the EncASRepPart
+							% what you get is just its innards starting with an un-tagged EncryptionKey
+							case 'KRB5':decode('EncryptionKey', Plain) of
+								{ok, K, B} when byte_size(B) > 0 ->
+									% reconstruct the front part that's missing -- first, the context #0 tag for EncryptionKey
+									{LenBytes, _} = asn1_encode_length(byte_size(Plain) - byte_size(B)),
+									All = <<1:1, 0:1, 1:1, 0:5, (list_to_binary(LenBytes))/binary, Plain/binary>>,
+									% then the sequence tag to go on the very front
+									{LenBytes2, _} = asn1_encode_length(byte_size(All)),
+									Plain2 = <<0:1, 0:1, 1:1, 16:5, (list_to_binary(LenBytes2))/binary, All/binary>>,
+
+									% don't bother reconstructing the application tag for EncASRepPart, just decode it here
+									% as a plain EncKDCRepPart
+									case 'KRB5':decode('EncKDCRepPart', Plain2) of
+										{ok, EncPart, _} ->
+											% yay we win
+											{EncPart2, S2} = post_decode(EncPart, S),
+											{R#'KDC-REP'{'enc-part' = EncPart2}, S2};
+										_ -> {R, S}
+									end;
+								_ ->
+									{R, S}
+							end
 					end
 			end
 	end;
@@ -358,6 +378,26 @@ post_decode(R = #'EncKDCRepPart'{flags = Flags}, S) ->
 	FlagSet = decode_bit_flags(Flags, ?ticket_flags),
 	{R#'EncKDCRepPart'{flags = sets:to_list(FlagSet)}, S};
 post_decode(Rec, S) -> {Rec, S}.
+
+asn1_encode_length(L) when L =< 127 ->
+    {[L],1};
+asn1_encode_length(L) ->
+    Oct = minimum_octets(L),
+    Len = length(Oct),
+    if
+        Len =< 126 ->
+            {[128 bor Len|Oct],Len + 1};
+        true ->
+            exit({error,{asn1,too_long_length_oct,Len}})
+    end.
+
+minimum_octets(0, Acc) ->
+    Acc;
+minimum_octets(Val, Acc) ->
+    minimum_octets(Val bsr 8, [Val band 255|Acc]).
+
+minimum_octets(Val) ->
+    minimum_octets(Val, []).
 
 datetime_to_krbtime({{Y, M, D}, {Hr, Min, Sec}}) ->
 	lists:flatten(io_lib:format("~4..0B~2..0B~2..0B~2..0B~2..0B~2..0BZ",

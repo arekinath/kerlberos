@@ -67,6 +67,18 @@ encrypt(aes256_hmac_sha1, Key, Data, Opts) ->
 	Usage = proplists:get_value(usage, Opts, 1),
 	Triad = base_key_to_triad(aes_cbc256, Key, Usage),
 	encrypt_cts_hmac(aes_cbc256, sha, 12, 16, Triad, <<0:128>>, Data);
+encrypt(rc4_hmac, Key, Data, Opts) ->
+    T = ms_usage_map(proplists:get_value(usage, Opts, 1)),
+    K1 = crypto:hmac(md5, Key, <<T:32/little>>),
+    K2 = K1,
+    Confounder = crypto:rand_bytes(8),
+    PreMAC = <<Confounder/binary, Data/binary>>,
+    MAC = crypto:hmac(md5, K2, PreMAC),
+    K3 = crypto:hmac(md5, K1, MAC),
+    State0 = crypto:stream_init(rc4, K3),
+    {State1, ConfEnc} = crypto:stream_encrypt(State0, Confounder),
+    {_, DataEnc} = crypto:stream_encrypt(State1, Data),
+    <<MAC/binary, ConfEnc/binary, DataEnc/binary>>;
 encrypt(E, _, _, _) -> error({unknown_etype, E}).
 
 -spec decrypt(etype(), binary(), binary()) -> binary().
@@ -86,6 +98,18 @@ decrypt(aes256_hmac_sha1, Key, Data, Opts) ->
 	Usage = proplists:get_value(usage, Opts, 1),
 	Triad = base_key_to_triad(aes_cbc256, Key, Usage),
 	decrypt_cts_hmac(aes_cbc256, sha, 12, 16, Triad, <<0:128>>, Data);
+decrypt(rc4_hmac, Key, Data, Opts) ->
+    T = ms_usage_map(proplists:get_value(usage, Opts, 1)),
+    K1 = crypto:hmac(md5, Key, <<T:32/little>>),
+    K2 = K1,
+    <<MAC:16/binary, ConfEnc:16/binary, DataEnc/binary>> = Data,
+    K3 = crypto:hmac(md5, K1, MAC),
+    State0 = crypto:stream_init(rc4, K3),
+    {State1, Confounder} = crypto:stream_decrypt(State0, ConfEnc),
+    {_, Plain} = crypto:stream_decrypt(State1, DataEnc),
+    PreMAC = <<Confounder/binary, Plain/binary>>,
+    MAC = crypto:hmac(md5, K2, PreMAC),
+    Plain;
 decrypt(E, _, _, _) -> error({unknown_etype, E}).
 
 -type protocol_key() :: {Kc :: binary(), Ke :: binary(), Ki :: binary()}.
@@ -139,6 +163,10 @@ dk(Cipher, BaseKey, Constant) ->
 to_56bstr(B) ->
 	<< <<Low:7>> || <<_:1,Low:7>> <= B >>.
 
+ms_usage_map(3) -> 8;
+ms_usage_map(9) -> 8;
+ms_usage_map(N) -> N.
+
 des_add_parity(B) ->
 	<< <<N:7,(odd_parity(N)):1>> || <<N:7>> <= B >>.
 des_fix_parity(B) ->
@@ -174,6 +202,9 @@ des_string_to_key_stage(State, Odd, <<Block:8/binary, Rest/binary>>) ->
 	State2 = binxor(State, Xor),
 	des_string_to_key_stage(State2, (not Odd), Rest).
 
+ms_string_to_key(Bin) ->
+    crypto:hash(md4, unicode:characters_to_binary(Bin, utf8, {utf16, little})).
+
 pad_block(B) -> pad_block(B, 8).
 pad_block(B, 1) -> B;
 pad_block(B, N) ->
@@ -186,6 +217,7 @@ string_to_key(des_md4, String, Salt) -> des_string_to_key(String, Salt);
 string_to_key(des_md5, String, Salt) -> des_string_to_key(String, Salt);
 string_to_key(aes128_hmac_sha1, String, Salt) -> aes_string_to_key(aes_cbc128, 16, String, Salt);
 string_to_key(aes256_hmac_sha1, String, Salt) -> aes_string_to_key(aes_cbc256, 32, String, Salt);
+string_to_key(rc4_hmac, String, Salt) -> ms_string_to_key(String);
 string_to_key(E, _, _) -> error({unknown_etype, E}).
 
 -spec random_to_key(etype(), binary()) -> binary().
