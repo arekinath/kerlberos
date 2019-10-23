@@ -30,8 +30,8 @@
 -type opt() :: silent | secure | {setenv, Name :: string(), Value :: string()} | {unsetenv, Name :: string()} | {error, string()}.
 -type opts() :: [opt()].
 
--callback can_handle(Username :: string(), Class :: string(), Dict :: dict()) -> true | false.
--callback verify(Username :: string(), Password :: binary(), Class :: string(), Dict :: dict()) -> true | false | {true | false, opts()}.
+-callback can_handle(Username :: string(), Class :: string(), Dict :: dict:dict()) -> true | false.
+-callback verify(Username :: string(), Password :: binary(), Class :: string(), Dict :: dict:dict()) -> true | false | {true | false, opts()}.
 
 -export([main/2]).
 

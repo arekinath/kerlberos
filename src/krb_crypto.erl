@@ -90,7 +90,7 @@ encrypt(rc4_hmac, Key, Data, Opts) ->
     T = ms_usage_map(proplists:get_value(usage, Opts, 1)),
     K1 = crypto:hmac(md5, Key, <<T:32/little>>),
     K2 = K1,
-    Confounder = crypto:rand_bytes(8),
+    Confounder = crypto:strong_rand_bytes(8),
     PreMAC = <<Confounder/binary, Data/binary>>,
     MAC = crypto:hmac(md5, K2, PreMAC),
     K3 = crypto:hmac(md5, K1, MAC),
@@ -134,7 +134,7 @@ decrypt(E, _, _, _) -> error({unknown_etype, E}).
 -type protocol_key() :: {Kc :: binary(), Ke :: binary(), Ki :: binary()}.
 -spec encrypt_cts_hmac(atom(), atom(), integer(), integer(), protocol_key(), binary(), binary()) -> binary().
 encrypt_cts_hmac(Cipher, MacType, MacLength, BlockSize, {_Kc, Ke, Ki}, IV, Data) ->
-	Confounder = crypto:rand_bytes(BlockSize),
+	Confounder = crypto:strong_rand_bytes(BlockSize),
 	PreMAC = <<Confounder/binary, Data/binary>>,
 	HMAC = crypto:hmac(MacType, Ki, PreMAC, MacLength),
 	Enc = crypto_cts:encrypt(Cipher, Ke, IV, PreMAC),
@@ -142,7 +142,7 @@ encrypt_cts_hmac(Cipher, MacType, MacLength, BlockSize, {_Kc, Ke, Ki}, IV, Data)
 
 -spec encrypt_orig(atom(), mfa(), integer(), integer(), binary(), binary(), binary()) -> binary().
 encrypt_orig(Cipher, MacFun, MacLength, BlockSize, Key, IV, Data) ->
-	Confounder = crypto:rand_bytes(BlockSize),
+	Confounder = crypto:strong_rand_bytes(BlockSize),
 	PreMAC = pad_block(<<Confounder/binary, 0:MacLength/unit:8, Data/binary>>, BlockSize),
 	{MacM, MacF, MacA} = MacFun,
 	MAC = binary:part(erlang:apply(MacM, MacF, MacA ++ [PreMAC]), {0, MacLength}),
@@ -236,7 +236,7 @@ string_to_key(des_md4, String, Salt) -> des_string_to_key(String, Salt);
 string_to_key(des_md5, String, Salt) -> des_string_to_key(String, Salt);
 string_to_key(aes128_hmac_sha1, String, Salt) -> aes_string_to_key(aes_cbc128, 16, String, Salt);
 string_to_key(aes256_hmac_sha1, String, Salt) -> aes_string_to_key(aes_cbc256, 32, String, Salt);
-string_to_key(rc4_hmac, String, Salt) -> ms_string_to_key(String);
+string_to_key(rc4_hmac, String, _Salt) -> ms_string_to_key(String);
 string_to_key(E, _, _) -> error({unknown_etype, E}).
 
 -spec random_to_key(etype(), binary()) -> binary().
