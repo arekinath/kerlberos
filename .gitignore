@@ -7,4 +7,6 @@ c_src/*.o
 src/*.asn1db
 src/conf_parse.erl
 src/KRB5.erl
+asngen
+_build
 include/KRB5.hrl

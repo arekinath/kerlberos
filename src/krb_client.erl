@@ -354,7 +354,7 @@ post_decode(E = #'KRB-ERROR'{'e-data' = EData}, S) when is_binary(EData) ->
 post_decode(R = #'KDC-REP'{'enc-part' = #'EncryptedData'{etype = ETypeId, kvno = KvNo, cipher = EP}}, S = #state{etype = EType, key = Key}) when is_binary(EP) ->
 	Etype = krb_crypto:etype_to_atom(ETypeId),
 	case (catch krb_crypto:decrypt(EType, Key, EP, [{usage, 3}])) of
-		{'EXIT', _} -> {R, S};
+		{'EXIT', _Why} -> {R, S};
 		Plain ->
 			case 'KRB5':decode('EncTGSRepPart', Plain) of
 				{ok, EncPart, _} ->
