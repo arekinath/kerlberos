@@ -8,7 +8,9 @@
   {applications, [
                   kernel,
                   stdlib,
-                  asn1
+                  asn1,
+                  pbkdf2,
+                  neotoma
                  ]},
   {mod, { krlb_app, []}},
   {env, [
