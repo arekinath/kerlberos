@@ -36,7 +36,7 @@
 -export([unauthed/2, unauthed/3]).
 -export([probe/2, probe_wait/2, auth/2, auth_wait/2]).
 
--export([open/1, open/2, authenticate/3]).
+-export([open/1, open/2, close/1, authenticate/3]).
 
 -opaque krb_client() :: pid().
 
@@ -56,6 +56,14 @@ authenticate(Client, Principal = [C | _], Secret) when is_list(C); is_binary(C) 
 	gen_fsm:sync_send_event(Client, {authenticate, Principal, Secret}, infinity);
 authenticate(Client, Principal, Secret) ->
 	authenticate(Client, [Principal], Secret).
+
+-spec close(krb_client()) -> ok.
+close(Client) ->
+	MRef = monitor(process, Client),
+	Client ! shutdown,
+	receive
+		{'DOWN', MRef, _, _, _} -> ok
+	end.
 
 -record(state, {
 	kdcs :: [{inet:ip_address() | inet:hostname(), Port :: integer()}],
@@ -294,6 +302,8 @@ auth_wait(timeout, S = #state{auth_client = Client}) ->
 	end,
 	{next_state, unauthed, S2#state{expect = []}}.
 
+handle_info(shutdown, _State, S = #state{}) ->
+	{stop, normal, S};
 handle_info({tcp_closed, Sock}, State, S = #state{tsock = Sock}) ->
 	?MODULE:State(timeout, S);
 handle_info({tcp, Sock, Data}, State, S = #state{tsock = Sock, expect = Decoders}) ->
