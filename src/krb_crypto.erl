@@ -32,12 +32,17 @@
 	random_to_key/2,
 	encrypt/3, encrypt/4,
 	decrypt/3, decrypt/4,
+	checksum/4,
 	atom_to_etype/1,
-	etype_to_atom/1]).
+	etype_to_atom/1,
+	atom_to_ctype/1,
+	ctype_to_atom/1,
+	ctype_for_etype/1]).
 
 -export([crc/1, crc/2]).
 
--type etype() :: des_crc | des_md4 | des_md5 | des3_md5 | des3_sha1 | aes128_hmac_sha1 | aes256_hmac_sha1 | rc4_hmac | rc4_hmac_exp | des3_sha1_nokd.
+-type etype() :: des_crc | des_md4 | des_md5 | des3_md5 | des3_sha1 | aes128_hmac_sha1 | aes256_hmac_sha1 | rc4_hmac | rc4_hmac_exp | des3_sha1_nokd | aes128_hmac_sha256 | aes256_hmac_sha384.
+-type ctype() :: hmac_sha1_aes128 | hmac_sha1_aes256.
 
 -spec etype_to_atom(integer()) -> etype().
 etype_to_atom(1) -> des_crc;
@@ -48,6 +53,8 @@ etype_to_atom(7) -> des3_sha1_nokd; % deprecated version
 etype_to_atom(16) -> des3_sha1;
 etype_to_atom(17) -> aes128_hmac_sha1;
 etype_to_atom(18) -> aes256_hmac_sha1;
+etype_to_atom(19) -> aes128_hmac_sha256;
+etype_to_atom(20) -> aes256_hmac_sha384;
 etype_to_atom(23) -> rc4_hmac;
 etype_to_atom(24) -> rc4_hmac_exp;
 etype_to_atom(_) -> error(unknown_etype).
@@ -61,15 +68,42 @@ atom_to_etype(des3_sha1_nokd) -> 7; % deprecated
 atom_to_etype(des3_sha1) -> 16;
 atom_to_etype(aes128_hmac_sha1) -> 17;
 atom_to_etype(aes256_hmac_sha1) -> 18;
+atom_to_etype(aes128_hmac_sha256) -> 19;
+atom_to_etype(aes256_hmac_sha384) -> 20;
 atom_to_etype(rc4_hmac) -> 23;
 atom_to_etype(rc4_hmac_exp) -> 24;
 atom_to_etype(_) -> error(unknown_etype).
 
--spec encrypt(etype(), binary(), binary()) -> binary().
-encrypt(Etype, Key, Data) -> encrypt(Etype, Key, Data, []).
+-spec ctype_to_atom(integer()) -> ctype().
+ctype_to_atom(15) -> hmac_sha1_aes128;
+ctype_to_atom(16) -> hmac_sha1_aes256;
+ctype_to_atom(_) -> error(unknown_ctype).
 
--type cipher_option() :: {usage, integer()}.
--type cipher_options() :: [cipher_option()].
+-spec atom_to_ctype(ctype()) -> integer().
+atom_to_ctype(hmac_sha1_aes128) -> 15;
+atom_to_ctype(hmac_sha1_aes256) -> 16;
+atom_to_ctype(_) -> error(unknown_ctype).
+
+-spec ctype_for_etype(etype()) -> ctype().
+ctype_for_etype(aes128_hmac_sha1) -> hmac_sha1_aes128;
+ctype_for_etype(aes256_hmac_sha1) -> hmac_sha1_aes256;
+ctype_for_etype(E) -> error({no_ctype_for_etype, E}).
+
+-spec checksum(ctype(), binary(), binary(), cipher_options()) -> binary().
+checksum(hmac_sha1_aes128, Key, Data, Opts) ->
+	Usage = maps:get(usage, Opts, 1),
+	{Kc, _Ke, _Ki} = base_key_to_triad(aes_cbc128, Key, Usage),
+	crypto:hmac(sha, Kc, Data, 12);
+checksum(hmac_sha1_aes256, Key, Data, Opts) ->
+	Usage = maps:get(usage, Opts, 1),
+	{Kc, _Ke, _Ki} = base_key_to_triad(aes_cbc256, Key, Usage),
+	crypto:hmac(sha, Kc, Data, 12);
+checksum(C, _, _, _) -> error({unknown_ctype, C}).
+
+-spec encrypt(etype(), binary(), binary()) -> binary().
+encrypt(Etype, Key, Data) -> encrypt(Etype, Key, Data, #{}).
+
+-type cipher_options() :: #{usage => integer()}.
 
 -spec encrypt(etype(), binary(), binary(), cipher_options()) -> binary().
 encrypt(des_crc, Key, Data, _Opts) ->
@@ -79,29 +113,37 @@ encrypt(des_md4, Key, Data, _Opts) ->
 encrypt(des_md5, Key, Data, _Opts) ->
 	encrypt_orig(des_cbc, {crypto, hash, [md5]}, 16, 8, Key, <<0:64>>, Data);
 encrypt(aes128_hmac_sha1, Key, Data, Opts) ->
-	Usage = proplists:get_value(usage, Opts, 1),
+	Usage = maps:get(usage, Opts, 1),
 	Triad = base_key_to_triad(aes_cbc128, Key, Usage),
 	encrypt_cts_hmac(aes_cbc128, sha, 12, 16, Triad, <<0:128>>, Data);
 encrypt(aes256_hmac_sha1, Key, Data, Opts) ->
-	Usage = proplists:get_value(usage, Opts, 1),
+	Usage = maps:get(usage, Opts, 1),
 	Triad = base_key_to_triad(aes_cbc256, Key, Usage),
 	encrypt_cts_hmac(aes_cbc256, sha, 12, 16, Triad, <<0:128>>, Data);
+encrypt(aes128_hmac_sha256, Key, Data, Opts) ->
+	Usage = maps:get(usage, Opts, 1),
+	Triad = base_key_to_triad(aes_cbc128, Key, Usage),
+	encrypt_cts_hmac(aes_cbc128, sha256, 32, 16, Triad, <<0:128>>, Data);
+encrypt(aes256_hmac_sha384, Key, Data, Opts) ->
+	Usage = maps:get(usage, Opts, 1),
+	Triad = base_key_to_triad(aes_cbc256, Key, Usage),
+	encrypt_cts_hmac(aes_cbc256, sha384, 48, 16, Triad, <<0:128>>, Data);
 encrypt(rc4_hmac, Key, Data, Opts) ->
-    T = ms_usage_map(proplists:get_value(usage, Opts, 1)),
-    K1 = crypto:hmac(md5, Key, <<T:32/little>>),
-    K2 = K1,
-    Confounder = crypto:strong_rand_bytes(8),
-    PreMAC = <<Confounder/binary, Data/binary>>,
-    MAC = crypto:hmac(md5, K2, PreMAC),
-    K3 = crypto:hmac(md5, K1, MAC),
-    State0 = crypto:stream_init(rc4, K3),
-    {State1, ConfEnc} = crypto:stream_encrypt(State0, Confounder),
-    {_, DataEnc} = crypto:stream_encrypt(State1, Data),
-    <<MAC/binary, ConfEnc/binary, DataEnc/binary>>;
+	T = ms_usage_map(maps:get(usage, Opts, 1)),
+	K1 = crypto:hmac(md5, Key, <<T:32/little>>),
+	K2 = K1,
+	Confounder = crypto:strong_rand_bytes(8),
+	PreMAC = <<Confounder/binary, Data/binary>>,
+	MAC = crypto:hmac(md5, K2, PreMAC),
+	K3 = crypto:hmac(md5, K1, MAC),
+	State0 = crypto:stream_init(rc4, K3),
+	{State1, ConfEnc} = crypto:stream_encrypt(State0, Confounder),
+	{_, DataEnc} = crypto:stream_encrypt(State1, Data),
+	<<MAC/binary, ConfEnc/binary, DataEnc/binary>>;
 encrypt(E, _, _, _) -> error({unknown_etype, E}).
 
 -spec decrypt(etype(), binary(), binary()) -> binary().
-decrypt(Etype, Key, Data) -> encrypt(Etype, Key, Data, []).
+decrypt(Etype, Key, Data) -> encrypt(Etype, Key, Data, #{}).
 
 decrypt(des_crc, Key, Data, _Opts) ->
 	decrypt_orig(des_cbc, {?MODULE, crc, []}, 4, 8, Key, Key, Data);
@@ -110,25 +152,33 @@ decrypt(des_md4, Key, Data, _Opts) ->
 decrypt(des_md5, Key, Data, _Opts) ->
 	decrypt_orig(des_cbc, {crypto, hash, [md5]}, 16, 8, Key, <<0:64>>, Data);
 decrypt(aes128_hmac_sha1, Key, Data, Opts) ->
-	Usage = proplists:get_value(usage, Opts, 1),
+	Usage = maps:get(usage, Opts, 1),
 	Triad = base_key_to_triad(aes_cbc128, Key, Usage),
 	decrypt_cts_hmac(aes_cbc128, sha, 12, 16, Triad, <<0:128>>, Data);
 decrypt(aes256_hmac_sha1, Key, Data, Opts) ->
-	Usage = proplists:get_value(usage, Opts, 1),
+	Usage = maps:get(usage, Opts, 1),
 	Triad = base_key_to_triad(aes_cbc256, Key, Usage),
 	decrypt_cts_hmac(aes_cbc256, sha, 12, 16, Triad, <<0:128>>, Data);
+decrypt(aes128_hmac_sha256, Key, Data, Opts) ->
+	Usage = maps:get(usage, Opts, 1),
+	Triad = base_key_to_triad(aes_cbc128, Key, Usage),
+	decrypt_cts_hmac(aes_cbc128, sha256, 32, 16, Triad, <<0:128>>, Data);
+decrypt(aes256_hmac_sha384, Key, Data, Opts) ->
+	Usage = maps:get(usage, Opts, 1),
+	Triad = base_key_to_triad(aes_cbc256, Key, Usage),
+	decrypt_cts_hmac(aes_cbc256, sha384, 48, 16, Triad, <<0:128>>, Data);
 decrypt(rc4_hmac, Key, Data, Opts) ->
-    T = ms_usage_map(proplists:get_value(usage, Opts, 1)),
-    K1 = crypto:hmac(md5, Key, <<T:32/little>>),
-    K2 = K1,
-    <<MAC:16/binary, ConfEnc:16/binary, DataEnc/binary>> = Data,
-    K3 = crypto:hmac(md5, K1, MAC),
-    State0 = crypto:stream_init(rc4, K3),
-    {State1, Confounder} = crypto:stream_decrypt(State0, ConfEnc),
-    {_, Plain} = crypto:stream_decrypt(State1, DataEnc),
-    PreMAC = <<Confounder/binary, Plain/binary>>,
-    MAC = crypto:hmac(md5, K2, PreMAC),
-    Plain;
+	T = ms_usage_map(maps:get(usage, Opts, 1)),
+	K1 = crypto:hmac(md5, Key, <<T:32/little>>),
+	K2 = K1,
+	<<MAC:16/binary, ConfEnc:16/binary, DataEnc/binary>> = Data,
+	K3 = crypto:hmac(md5, K1, MAC),
+	State0 = crypto:stream_init(rc4, K3),
+	{State1, Confounder} = crypto:stream_decrypt(State0, ConfEnc),
+	{_, Plain} = crypto:stream_decrypt(State1, DataEnc),
+	PreMAC = <<Confounder/binary, Plain/binary>>,
+	MAC = crypto:hmac(md5, K2, PreMAC),
+	Plain;
 decrypt(E, _, _, _) -> error({unknown_etype, E}).
 
 -type protocol_key() :: {Kc :: binary(), Ke :: binary(), Ki :: binary()}.

@@ -29,3 +29,23 @@
 -module(krbcc_ets).
 
 -behaviour(krbcc).
+-export([init/1, terminate/1, store_ticket/5, get_ticket/3]).
+
+-record(state, {tickets = #{} :: map()}).
+
+init(_Opts) ->
+	{ok, #state{}}.
+
+store_ticket(Principal, Realm, Key, Ticket, S0 = #state{tickets = T0}) ->
+	T1 = T0#{ {Principal, Realm} => {Key, Ticket} },
+	{ok, S0#state{tickets = T1}}.
+
+get_ticket(Principal, Realm, S = #state{tickets = T}) ->
+	K = {Principal, Realm},
+	case T of
+		#{ K := {Key, Ticket} } ->
+			{ok, Key, Ticket};
+		_ -> {error, not_found}
+	end.
+
+terminate(#state{}) -> ok.

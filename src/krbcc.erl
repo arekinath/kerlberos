@@ -29,5 +29,7 @@
 
 -include("KRB5.hrl").
 
--callback init(Opts :: [{atom(), term()}]) -> {ok, State :: term()}.
+-callback init(Opts :: map()) -> {ok, State :: term()}.
+-callback store_ticket(Principal :: string(), Realm :: string(), Key :: term(), Ticket :: term(), State :: term()) -> {ok, State2 :: term()}.
+-callback get_ticket(Principal :: string(), Realm :: string()) -> {ok, Key :: term(), Ticket :: term()} | {error, Reason :: term()}.
 -callback terminate(State :: term()) -> ignored.
