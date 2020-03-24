@@ -28,24 +28,57 @@
 %% @doc credential cache in ets
 -module(krbcc_ets).
 
+-include("KRB5.hrl").
+
 -behaviour(krbcc).
--export([init/1, terminate/1, store_ticket/5, get_ticket/3]).
+-export([init/1, terminate/1, store_ticket/4, get_ticket/4, find_tickets/2]).
 
 -record(state, {tickets = #{} :: map()}).
 
 init(_Opts) ->
 	{ok, #state{}}.
 
-store_ticket(Principal, Realm, Key, Ticket, S0 = #state{tickets = T0}) ->
-	T1 = T0#{ {Principal, Realm} => {Key, Ticket} },
+store_ticket(UserPrincipal, Key, Ticket, S0 = #state{tickets = T0}) ->
+	#'Ticket'{realm = Realm, sname = SN} = Ticket,
+	#'PrincipalName'{'name-string' = ServicePrincipal} = SN,
+	T1 = T0#{ {UserPrincipal, ServicePrincipal, Realm} => {Key, Ticket} },
 	{ok, S0#state{tickets = T1}}.
 
-get_ticket(Principal, Realm, S = #state{tickets = T}) ->
-	K = {Principal, Realm},
+get_ticket(UserPrincipal, ServicePrincipal, Realm, S = #state{tickets = T}) ->
+	K = {UserPrincipal, ServicePrincipal, Realm},
 	case T of
 		#{ K := {Key, Ticket} } ->
 			{ok, Key, Ticket};
 		_ -> {error, not_found}
+	end.
+
+find_tickets(#{user_principal := UPN}, S = #state{tickets = T}) ->
+	Found = maps:fold(fun (K, V, Acc) ->
+		case K of
+			{UPN, SPN, Realm} ->
+				{Key, Ticket} = V,
+				[#{service_principal => UPN, realm => Realm,
+				   key => Key, ticket => Ticket} | Acc];
+			_ -> Acc
+		end
+	end, [], T),
+	case Found of
+		[] -> {error, not_found};
+		_ -> {ok, Found}
+	end;
+find_tickets(#{service_principal := SPN}, S = #state{tickets = T}) ->
+	Found = maps:fold(fun (K, V, Acc) ->
+		case K of
+			{UPN, SPN, Realm} ->
+				{Key, Ticket} = V,
+				[#{user_principal => UPN, realm => Realm,
+				   key => Key, ticket => Ticket} | Acc];
+			_ -> Acc
+		end
+	end, [], T),
+	case Found of
+		[] -> {error, not_found};
+		_ -> {ok, Found}
 	end.
 
 terminate(#state{}) -> ok.

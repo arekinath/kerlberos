@@ -390,4 +390,9 @@ AD-AND-OR               ::= SEQUENCE {
 
 AD-MANDATORY-FOR-KDC    ::= AuthorizationData
 
+PA-PAC-REQUEST          ::= SEQUENCE {
+        include-pac[0] BOOLEAN --If TRUE, and no pac present, include PAC.
+                               --If FALSE, and PAC present, remove PAC
+}
+
 END

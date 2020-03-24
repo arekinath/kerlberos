@@ -264,5 +264,9 @@
   elements
 }).
 
+-record('PA-PAC-REQUEST', {
+  'include-pac'
+}).
+
 -define('id-krb5', {1,3,6,1,5,2}).
 -endif. %% _KRB5_HRL_

@@ -30,7 +30,6 @@
 -behaviour(gen_fsm).
 
 -include("KRB5.hrl").
--include("krb_errors.hrl").
 
 -export([init/1, handle_info/3, terminate/3]).
 -export([unauthed/2, unauthed/3, authed/2, authed/3, authed_send/2, authed_wait/2]).
@@ -74,6 +73,7 @@ close(Client) ->
 	usock :: gen_udp:socket(),
 	tsock :: gen_tcp:socket(),
 	realm :: string(),
+	tgtrealm :: string(),
 	principal :: [binary()],
 	secret :: binary(),
 	auth_client :: term(),
@@ -85,8 +85,7 @@ close(Client) ->
 	nonce :: integer(),
 	expect :: [atom()],
 	probe_timeouts  :: integer(),
-	ccmod :: atom(),
-	ccstate :: term(),
+	cc :: pid(),
 	svc_principal :: [binary()],
 	svc_client :: term(),
 	svc_key :: binary()
@@ -131,7 +130,15 @@ init([Realm, Opts]) ->
 	KdcPort = maps:get(port, Opts, 88),
 	CipherList = maps:get(ciphers, Opts, [aes256_hmac_sha1, aes128_hmac_sha1, rc4_hmac, des_md5, des_md4, des_crc]),
 	Timeout = maps:get(timeout, Opts, 1000),
-	CCMod = maps:get(cc_mod, Opts, krbcc_ets),
+	CC = case Opts of
+		#{cc := CCPid} -> CCPid;
+		#{cc_mod := CCMod} ->
+			{ok, CCPid} = krbcc:start_link(CCMod, #{}),
+			CCPid;
+		_ ->
+			{ok, CCPid} = krbcc:start_link(krbcc_ets, #{}),
+			CCPid
+	end,
 	Kdcs = case Opts of
 		#{kdc := L} when is_list(L) ->
 			lists:map(fun
@@ -142,13 +149,24 @@ init([Realm, Opts]) ->
 		#{kcd := Host} -> [{Host, KdcPort}];
 		_ -> lookup_kdcs(string:to_lower(Realm))
 	end,
-	{ok, CCState0} = CCMod:init(#{}),
 	{ok, Sock} = gen_udp:open(0, [binary, {active, true}]),
-	{ok, unauthed, #state{realm = Realm, kdcs = Kdcs, usock = Sock, cipher_list = CipherList, timeout = Timeout, ccmod = CCMod, ccstate = CCState0}, 0}.
+	{ok, unauthed, #state{realm = Realm, kdcs = Kdcs, usock = Sock, cipher_list = CipherList, timeout = Timeout, cc = CC}, 0}.
 
-unauthed(timeout, S = #state{}) ->
-	% check in cc for existing tgt
-	{next_state, unauthed, S}.
+unauthed(timeout, S = #state{cc = CC, realm = Realm}) ->
+	case krbcc:find_tickets(CC, #{service_principal => ["krbtgt", Realm]}) of
+		{ok, Tgts = [_ | _]} ->
+			LocalTgts = [T || T = #{realm := Realm} <- Tgts],
+			Tgt = case LocalTgts of
+				[T | _] -> T;
+				_ -> [T | _] = Tgts, T
+			end,
+			#{realm := TgtRealm, key := KeyRec, user_principal := UserPrinc} = Tgt,
+			#'EncryptionKey'{keytype = EType} = KeyRec,
+			S1 = S#state{tgtrealm = TgtRealm, etype = EType, principal = UserPrinc},
+			{next_state, authed, S1};
+		_ ->
+			{next_state, unauthed, S}
+	end.
 
 unauthed({authenticate, Principal, Secret}, From, S = #state{}) ->
 	{next_state, probe, S#state{principal = Principal, secret = Secret, auth_client = From, probe_timeouts = 0}, 0}.
@@ -175,11 +193,11 @@ probe(timeout, S = #state{kdcs = Kdcs, realm = Realm, principal = Principal, sec
 	ok = send_kdc_pkt(Pkt, S),
 	{next_state, probe_wait, S#state{expect = ['KRB-ERROR']}, S#state.timeout}.
 
-probe_wait(Err = #'KRB-ERROR'{'error-code' = ?KDC_ERR_ETYPE_NOSUPP}, S = #state{auth_client = Client}) ->
+probe_wait(Err = #'KRB-ERROR'{'error-code' = 'KDC_ERR_ETYPE_NOSUPP'}, S = #state{auth_client = Client}) ->
 	gen_fsm:reply(Client, {error, no_matching_ciphers}),
 	{next_state, unauthed, S#state{expect = []}};
 
-probe_wait(Err = #'KRB-ERROR'{'error-code' = ?KRB_ERR_RESPONSE_TOO_BIG}, S = #state{kdcs = [{Kdc, Port} | _], timeout = T}) ->
+probe_wait(Err = #'KRB-ERROR'{'error-code' = 'KRB_ERR_RESPONSE_TOO_BIG'}, S = #state{kdcs = [{Kdc, Port} | _], timeout = T}) ->
 	case retry_connect(Kdc, Port, [{active, true}, binary, {packet, 4}, {nodelay, true}], T) of
 		{ok, Sock} ->
 			ok = inet:setopts(S#state.usock, [{active, false}]),
@@ -189,11 +207,11 @@ probe_wait(Err = #'KRB-ERROR'{'error-code' = ?KRB_ERR_RESPONSE_TOO_BIG}, S = #st
 	end;
 
 probe_wait(Err = #'KRB-ERROR'{'error-code' = Code}, S = #state{auth_client = Client})
-		when Code == ?KDC_ERR_C_PRINCIPAL_UNKNOWN; Code == ?KDC_ERR_PRINCIPAL_NOT_UNIQUE; Code == ?KDC_ERR_POLICY ->
+		when Code == 'KDC_ERR_C_PRINCIPAL_UNKNOWN'; Code == 'KDC_ERR_PRINCIPAL_NOT_UNIQUE'; Code == 'KDC_ERR_POLICY' ->
 	gen_fsm:reply(Client, {error, bad_principal}),
 	{next_state, unauthed, S#state{expect = []}};
 
-probe_wait(Err = #'KRB-ERROR'{'error-code' = ?KDC_ERR_PREAUTH_REQUIRED}, S = #state{}) ->
+probe_wait(Err = #'KRB-ERROR'{'error-code' = 'KDC_ERR_PREAUTH_REQUIRED'}, S = #state{}) ->
 	PaDatas = Err#'KRB-ERROR'.'e-data',
 	case [I || #'PA-DATA'{'padata-type' = 19, 'padata-value' = I} <- PaDatas] of
 		[Etype2s] ->
@@ -288,22 +306,22 @@ auth_wait(R = #'KDC-REP'{'enc-part' = EncPart}, S = #state{auth_client = Client,
 	end,
 	case Valid of
 		true ->
-			#state{realm = Realm, ccmod = CCMod, ccstate = CCState0} = S,
+			#state{realm = Realm, cc = CC} = S,
 			#'EncKDCRepPart'{key = KeyRec0} = EncPart,
 			#'EncryptionKey'{keytype = KT0} = KeyRec0,
 			EType = krb_crypto:etype_to_atom(KT0),
 			KeyRec1 = KeyRec0#'EncryptionKey'{keytype = EType},
 			#'KDC-REP'{ticket = Ticket} = R,
-			{ok, CCState1} = CCMod:store_ticket(["krbtgt", Realm], Realm, KeyRec1, Ticket, CCState0),
-			S1 = S#state{ccstate = CCState1, expect = []},
+			#'Ticket'{realm = TgtRealm} = Ticket,
+			ok = krbcc:store_ticket(CC, S#state.principal, KeyRec1, Ticket),
 			gen_fsm:reply(Client, ok),
-			{next_state, authed, S1};
+			{next_state, authed, S#state{expect = [], tgtrealm = TgtRealm}};
 		false ->
 			gen_fsm:reply(Client, {error, invalid_response}),
 			{next_state, unauthed, S#state{expect = []}}
 	end;
 
-auth_wait(Err = #'KRB-ERROR'{'error-code' = ?KRB_ERR_RESPONSE_TOO_BIG}, S = #state{kdcs = [{Kdc, Port} | _], timeout = T}) ->
+auth_wait(Err = #'KRB-ERROR'{'error-code' = 'KRB_ERR_RESPONSE_TOO_BIG'}, S = #state{kdcs = [{Kdc, Port} | _], timeout = T}) ->
 	case retry_connect(Kdc, Port, [{active, true}, binary, {packet, 4}, {nodelay, true}], T) of
 		{ok, Sock} ->
 			ok = inet:setopts(S#state.usock, [{active, false}]),
@@ -313,7 +331,7 @@ auth_wait(Err = #'KRB-ERROR'{'error-code' = ?KRB_ERR_RESPONSE_TOO_BIG}, S = #sta
 	end;
 
 auth_wait(Err = #'KRB-ERROR'{'error-code' = Code}, S = #state{auth_client = Client})
-		when Code == ?KDC_ERR_PREAUTH_FAILED; Code == ?KRB_AP_ERR_BAD_INTEGRITY ->
+		when Code == 'KDC_ERR_PREAUTH_FAILED'; Code == 'KRB_AP_ERR_BAD_INTEGRITY' ->
 	gen_fsm:reply(Client, {error, bad_secret}),
 	{next_state, unauthed, S#state{expect = []}};
 
@@ -340,13 +358,12 @@ authed({obtain_ticket, SvcPrincipal}, From, S = #state{}) ->
 	S1 = S#state{svc_principal = SvcPrincipal, svc_client = From},
 	{next_state, authed_send, S1, 0}.
 
-authed_send(timeout, S = #state{realm = Realm, principal = UserPrincipal, svc_principal = SvcPrincipal}) ->
+authed_send(timeout, S = #state{realm = Realm, tgtrealm = TgtRealm, principal = UserPrincipal, svc_principal = SvcPrincipal, cc = CC}) ->
 	NowUSec = erlang:system_time(microsecond),
 	NowMSec = NowUSec div 1000,
 	USec = NowUSec rem 1000,
 	NowKrb = datetime_to_krbtime(calendar:system_time_to_universal_time(NowMSec, millisecond)),
-	#state{ccmod = CCMod, ccstate = CCState} = S,
-	{ok, KeyRec, Ticket} = CCMod:get_ticket(["krbtgt", Realm], Realm, CCState),
+	{ok, KeyRec, Ticket} = krbcc:get_ticket(CC, UserPrincipal, ["krbtgt", Realm], TgtRealm),
 	#'EncryptionKey'{keytype = EType, keyvalue = Key} = KeyRec,
 	SvcKey = crypto:strong_rand_bytes(byte_size(Key)),
 	SvcEncKey = #'EncryptionKey'{
@@ -371,7 +388,7 @@ authed_send(timeout, S = #state{realm = Realm, principal = UserPrincipal, svc_pr
 	},
 	Auth = #'Authenticator'{
 		'authenticator-vno' = 5,
-		crealm = Realm,
+		crealm = TgtRealm,
 		cname = #'PrincipalName'{'name-type' = 1, 'name-string' = UserPrincipal},
 		ctime = NowKrb,
 		cusec = USec,
@@ -391,8 +408,11 @@ authed_send(timeout, S = #state{realm = Realm, principal = UserPrincipal, svc_pr
 		'ap-options' = <<0:32>>
 	},
 	{ok, APReqBin} = 'KRB5':encode('AP-REQ', APReq),
+	{ok, PacReqBin} = 'KRB5':encode('PA-PAC-REQUEST',
+		#'PA-PAC-REQUEST'{'include-pac' = true}),
 	PAData = [
-		#'PA-DATA'{'padata-type' = 1, 'padata-value' = APReqBin}
+		#'PA-DATA'{'padata-type' = 1, 'padata-value' = APReqBin},
+		#'PA-DATA'{'padata-type' = 128, 'padata-value' = PacReqBin}
 	],
 	Req = #'KDC-REQ'{
 		pvno = 5,
@@ -414,24 +434,24 @@ authed_wait(R = #'KDC-REP'{'enc-part' = EncPart}, S = #state{svc_principal = Svc
 			end;
 		_ -> false
 	end,
+	io:format("~p\n", [R]),
 	case Valid of
 		true ->
-			#state{realm = Realm, ccmod = CCMod, ccstate = CCState0} = S,
+			#state{realm = Realm, cc = CC} = S,
 			#'EncKDCRepPart'{key = KeyRec0} = EncPart,
 			#'EncryptionKey'{keytype = KT0} = KeyRec0,
 			EType = krb_crypto:etype_to_atom(KT0),
 			KeyRec1 = KeyRec0#'EncryptionKey'{keytype = EType},
 			#'KDC-REP'{ticket = Ticket} = R,
-			{ok, CCState1} = CCMod:store_ticket(SvcPrinc, Realm, KeyRec1, Ticket, CCState0),
-			S1 = S#state{ccstate = CCState1, expect = []},
+			ok = krbcc:store_ticket(CC, S#state.principal, KeyRec1, Ticket),
 			gen_fsm:reply(Client, {ok, KeyRec1, Ticket}),
-			{next_state, authed, S1};
+			{next_state, authed, S#state{expect = []}};
 		false ->
 			gen_fsm:reply(Client, {error, invalid_response}),
 			{next_state, authed, S#state{expect = []}}
 	end;
 
-authed_wait(Err = #'KRB-ERROR'{'error-code' = ?KRB_ERR_RESPONSE_TOO_BIG}, S = #state{kdcs = [{Kdc, Port} | _], timeout = T}) ->
+authed_wait(Err = #'KRB-ERROR'{'error-code' = 'KRB_ERR_RESPONSE_TOO_BIG'}, S = #state{kdcs = [{Kdc, Port} | _], timeout = T}) ->
 	case retry_connect(Kdc, Port, [{active, true}, binary, {packet, 4}, {nodelay, true}], T) of
 		{ok, Sock} ->
 			ok = inet:setopts(S#state.usock, [{active, false}]),
@@ -441,7 +461,7 @@ authed_wait(Err = #'KRB-ERROR'{'error-code' = ?KRB_ERR_RESPONSE_TOO_BIG}, S = #s
 	end;
 
 authed_wait(Err = #'KRB-ERROR'{'error-code' = Code}, S = #state{svc_client = Client})
-		when Code == ?KDC_ERR_PREAUTH_FAILED; Code == ?KRB_AP_ERR_BAD_INTEGRITY ->
+		when Code == 'KDC_ERR_PREAUTH_FAILED'; Code == 'KRB_AP_ERR_BAD_INTEGRITY' ->
 	gen_fsm:reply(Client, {error, bad_secret}),
 	{next_state, authed, S#state{expect = []}};
 
@@ -513,6 +533,9 @@ post_decode(_State, Pa = #'PA-DATA'{'padata-type' = 19, 'padata-value' = Bin}, S
 			{Pa#'PA-DATA'{'padata-value' = EtypeInfo}, S};
 		_ -> {Pa, S}
 	end;
+post_decode(State, E = #'KRB-ERROR'{'error-code' = I}, S) when is_integer(I) ->
+	IC = krb_errors:err_to_atom(I),
+	post_decode(State, E#'KRB-ERROR'{'error-code' = IC}, S);
 post_decode(State, E = #'KRB-ERROR'{'e-data' = EData}, S) when is_binary(EData) ->
 	case 'KRB5':decode('METHOD-DATA', EData) of
 		{ok, PaDatas, <<>>} ->
