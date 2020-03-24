@@ -169,7 +169,11 @@ unauthed(timeout, S = #state{cc = CC, realm = Realm}) ->
 	end.
 
 unauthed({authenticate, Principal, Secret}, From, S = #state{}) ->
-	{next_state, probe, S#state{principal = Principal, secret = Secret, auth_client = From, probe_timeouts = 0}, 0}.
+	{next_state, probe, S#state{principal = Principal, secret = Secret, auth_client = From, probe_timeouts = 0}, 0};
+
+unauthed({obtain_ticket, _}, From, S = #state{}) ->
+	gen_fsm:reply(From, {error, not_authed}),
+	{next_state, unauthed, S}.
 
 probe(timeout, S = #state{kdcs = Kdcs, realm = Realm, principal = Principal, secret = Secret}) ->
 	Options = sets:from_list([renewable,proxiable,forwardable]),
