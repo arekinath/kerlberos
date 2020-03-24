@@ -86,5 +86,6 @@ handle_call({find_tickets, Filter}, _From,
 	Res = Mod:find_tickets(Filter, ModState0),
 	{reply, Res, S0};
 
-handle_call(stop, _From, S0 = #krbcc_state{}) ->
+handle_call(stop, From, S0 = #krbcc_state{}) ->
+	gen_server:reply(From, ok),
 	{stop, normal, S0}.
