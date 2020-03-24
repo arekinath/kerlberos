@@ -434,7 +434,6 @@ authed_wait(R = #'KDC-REP'{'enc-part' = EncPart}, S = #state{svc_principal = Svc
 			end;
 		_ -> false
 	end,
-	io:format("~p\n", [R]),
 	case Valid of
 		true ->
 			#state{realm = Realm, cc = CC} = S,
@@ -457,7 +456,7 @@ authed_wait(Err = #'KRB-ERROR'{'error-code' = 'KRB_ERR_RESPONSE_TOO_BIG'}, S = #
 			ok = inet:setopts(S#state.usock, [{active, false}]),
 			{next_state, authed_send, S#state{tsock = Sock}, 0};
 		_ ->
-			auth_wait(timeout, S)
+			authed_wait(timeout, S)
 	end;
 
 authed_wait(Err = #'KRB-ERROR'{'error-code' = Code}, S = #state{svc_client = Client})
@@ -479,7 +478,7 @@ authed_wait(timeout, S = #state{svc_client = Client}) ->
 			ok = inet:setopts(S#state.usock, [{active, true}]),
 			S#state{tsock = undefined}
 	end,
-	{next_state, unauthed, S2#state{expect = []}}.
+	{next_state, authed, S2#state{expect = []}}.
 
 handle_info(shutdown, _State, S = #state{}) ->
 	{stop, normal, S};
