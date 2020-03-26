@@ -84,7 +84,8 @@ close(Client) ->
 	key :: binary(),
 	nonce :: integer(),
 	expect :: [atom()],
-	probe_timeouts  :: integer(),
+	probe_timeouts = 0  :: integer(),
+	timeouts = 0 :: integer(),
 	cc :: pid(),
 	svc_principal :: [binary()],
 	svc_client :: term(),
@@ -343,7 +344,7 @@ auth_wait(Err = #'KRB-ERROR'{}, S = #state{auth_client = Client}) ->
 	gen_fsm:reply(Client, {error, {krb5_error, Err#'KRB-ERROR'.'error-code', Err#'KRB-ERROR'.'e-text'}}),
 	{next_state, unauthed, S#state{expect = []}};
 
-auth_wait(timeout, S = #state{auth_client = Client}) ->
+auth_wait(timeout, S = #state{kdcs = Kdcs, timeouts = T, auth_client = Client}) when (T > length(Kdcs)) ->
 	gen_fsm:reply(Client, {error, timeout}),
 	S2 = case S#state.tsock of
 		undefined -> S;
@@ -352,7 +353,16 @@ auth_wait(timeout, S = #state{auth_client = Client}) ->
 			ok = inet:setopts(S#state.usock, [{active, true}]),
 			S#state{tsock = undefined}
 	end,
-	{next_state, unauthed, S2#state{expect = []}}.
+	{next_state, unauthed, S2#state{expect = []}};
+auth_wait(timeout, S = #state{kdcs = [This | Rest], timeouts = T}) ->
+	S2 = case S#state.tsock of
+		undefined -> S;
+		Sock ->
+			gen_tcp:close(Sock),
+			ok = inet:setopts(S#state.usock, [{active, true}]),
+			S#state{tsock = undefined}
+	end,
+	{next_state, auth, S2#state{kdcs = Rest ++ [This], timeouts = T + 1}, 0}.
 
 authed(timeout, S = #state{}) ->
 	% check in cc for existing tgt
@@ -426,7 +436,7 @@ authed_send(timeout, S = #state{realm = Realm, tgtrealm = TgtRealm, principal = 
 	},
 	{ok, Pkt} = 'KRB5':encode('TGS-REQ', Req),
 	send_kdc_pkt(Pkt, S),
-	{next_state, authed_wait, S#state{expect = ['TGS-REP', 'KRB-ERROR'], nonce = Nonce, svc_key = SvcKey}, S#state.timeout}.
+	{next_state, authed_wait, S#state{expect = ['TGS-REP', 'KRB-ERROR'], nonce = Nonce, svc_key = SvcKey, timeouts = 0}, S#state.timeout}.
 
 authed_wait(R = #'KDC-REP'{'enc-part' = EncPart}, S = #state{svc_principal = SvcPrinc, svc_client = Client, nonce = Nonce}) ->
 	NowKrb = datetime_to_krbtime(calendar:universal_time()),
@@ -473,7 +483,7 @@ authed_wait(Err = #'KRB-ERROR'{}, S = #state{svc_client = Client}) ->
 	io:format("~p\n", [Err]),
 	{next_state, authed, S#state{expect = []}};
 
-authed_wait(timeout, S = #state{svc_client = Client}) ->
+authed_wait(timeout, S = #state{kdcs = Kdcs, timeouts = T, auth_client = Client}) when (T > length(Kdcs)) ->
 	gen_fsm:reply(Client, {error, timeout}),
 	S2 = case S#state.tsock of
 		undefined -> S;
@@ -482,7 +492,16 @@ authed_wait(timeout, S = #state{svc_client = Client}) ->
 			ok = inet:setopts(S#state.usock, [{active, true}]),
 			S#state{tsock = undefined}
 	end,
-	{next_state, authed, S2#state{expect = []}}.
+	{next_state, authed, S2#state{expect = []}};
+authed_wait(timeout, S = #state{kdcs = [This | Rest], timeouts = T}) ->
+	S2 = case S#state.tsock of
+		undefined -> S;
+		Sock ->
+			gen_tcp:close(Sock),
+			ok = inet:setopts(S#state.usock, [{active, true}]),
+			S#state{tsock = undefined}
+	end,
+	{next_state, authed_send, S2#state{kdcs = Rest ++ [This], timeouts = T + 1}, 0}.
 
 handle_info(shutdown, _State, S = #state{}) ->
 	{stop, normal, S};
