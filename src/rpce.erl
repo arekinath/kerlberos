@@ -57,13 +57,26 @@ start(Rem0) ->
 	<<_:32, Rem3/binary>> = Rem2,
 	#rpce_state{r = Rem3, off = 0}.
 
+-spec attrs_to_atoms(integer()) -> [sid_attr()].
+attrs_to_atoms(N) ->
+	<<_:2, E:1, _:25, D:1, C:1, B:1, A:1>> = <<N:32/big>>,
+	case A of 1 -> [mandatory]; _ -> [] end ++
+	case B of 1 -> [default]; _ -> [] end ++
+	case C of 1 -> [enabled]; _ -> [] end ++
+	case D of 1 -> [owner]; _ -> [] end ++
+	case E of 1 -> [resource]; _ -> [] end.
+
+-spec padding_size(integer(), integer()) -> integer().
 padding_size(PrimSize, Off) ->
 	Rem = Off rem PrimSize,
 	case Rem of
 		0 -> 0;
-		_ -> PrimSize - Rem
+		_ ->
+			%io:format("padding ~p\n", [PrimSize - Rem]),
+			PrimSize - Rem
 	end.
 
+-spec read(term(), rpce_state()) -> {term(), rpce_state()}.
 read(filetime, S0 = #rpce_state{r = Rem0, off = Off}) ->
 	Padding = padding_size(4, Off),
 	<<_:Padding/binary, V:64/little, Rem1/binary>> = Rem0,
@@ -83,10 +96,10 @@ read({unicode_string, Len, MaxLen}, S0 = #rpce_state{r = Rem0, off = Off}) ->
 	<<_:Padding/binary,
 	  MaxLength:32/little, 0:32/little, Length:32/little,
 	  Rem1/binary>> = Rem0,
-	ActualMaxLen = MaxLength * 2,
-	<<Data:ActualMaxLen/binary, Rem2/binary>> = Rem1,
+	ActualLen = Length * 2,
+	<<Data:ActualLen/binary, Rem2/binary>> = Rem1,
 	<<StringData:Len/binary, _/binary>> = Data,
-	S1 = S0#rpce_state{r = Rem2, off = Off + Padding + 12 + ActualMaxLen},
+	S1 = S0#rpce_state{r = Rem2, off = Off + Padding + 12 + ActualLen},
 	Str = unicode:characters_to_binary(StringData,
 		{utf16, little}, utf8),
 	{Str, S1};
@@ -138,7 +151,8 @@ read(sid, S0 = #rpce_state{r = Rem0, off = Off}) ->
 read(kerb_sid_and_attributes, S0 = #rpce_state{}) ->
 	{SidPtr, S1} = read({pointer,  sid}, S0),
 	{Attrs, S2} = read(ulong, S1),
-	{#sid_and_attributes{sid_ptr = SidPtr, attrs = Attrs}, S2};
+	{#sid_and_attributes{sid_ptr = SidPtr,
+		attrs = attrs_to_atoms(Attrs)}, S2};
 
 read(ushort, S0 = #rpce_state{r = Rem0, off = Off}) ->
 	Padding = padding_size(2, Off),
@@ -157,7 +171,8 @@ read({array, ulong}, S0 = #rpce_state{}) ->
 read(group_membership, S0 = #rpce_state{}) ->
 	{Rid, S1} = read(ulong, S0),
 	{Attrs, S2} = read(ulong, S1),
-	{#group_membership{rid = Rid, attrs = Attrs}, S2};
+	{#group_membership{rid = Rid,
+		attrs = attrs_to_atoms(Attrs)}, S2};
 
 read({array, Type}, S0 = #rpce_state{}) ->
 	{Count, S1} = read(ulong, S0),
@@ -215,7 +230,10 @@ finish(S0 = #rpce_state{deferred = Defs0, ptrtype = Types}) ->
 			{Ptr, Defs1} = gb_sets:take_smallest(Defs0),
 			S1 = S0#rpce_state{deferred = Defs1},
 			#{Ptr := Type} = Types,
+			%io:format("reading deferred ~p, ref ~p\n", [Type, Ptr]),
+			%io:format(" @ data ~p\n", [S1#rpce_state.r]),
 			{V, S2} = read(Type, S1),
+			%io:format(" => ~p\n", [V]),
 			#rpce_state{ptrdata = Data0} = S2,
 			Data1 = Data0#{Ptr => V},
 			S3 = S2#rpce_state{ptrdata = Data1},

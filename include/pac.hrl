@@ -25,6 +25,7 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %%
 
+-type sid_attr() :: mandatory | default | enabled | owner | resource.
 -record(sid, {
 	revision :: integer(),
 	identifier_auth :: integer(),
@@ -32,10 +33,10 @@
 -record(sid_and_attributes, {
 	sid_ptr :: rpce:rpce_ptr(),
 	sid = deferred :: #sid{} | deferred,
-	attrs :: integer()}).
+	attrs :: [sid_attr()]}).
 -record(group_membership, {
 	rid :: integer(),
-	attrs :: integer()}).
+	attrs :: [sid_attr()]}).
 
 -record(pac, {version :: integer(), buffers :: [pac_buffer()]}).
 -record(pac_unknown, {type :: integer(), data :: binary()}).
