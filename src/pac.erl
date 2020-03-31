@@ -27,10 +27,11 @@
 
 -module(pac).
 
--export([decode/1, test/0]).
+-export([decode/1]).
 
 -include("pac.hrl").
 
+-spec decode(binary()) -> #pac{}.
 decode(Bin = <<Count:32/little, Version:32/little, Rem/binary>>) ->
 	Bufs = decode_info_bufs(Count, Rem, Bin),
 	#pac{version = Version, buffers = Bufs}.

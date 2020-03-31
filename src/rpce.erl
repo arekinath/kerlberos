@@ -118,10 +118,10 @@ read(sid, S0 = #rpce_state{r = Rem0, off = Off}) ->
 	case Rem0 of
 		<<_:Padding/binary,
 		  SubAuthCount:32/little,
-		  1, SubAuthCount, IdentifierAuth:6/binary,
+		  1, SubAuthCount, IdentifierAuth:48/big,
 		  Rem1/binary>> -> ok;
 		<<_:Padding/binary,
-		  1, SubAuthCount, IdentifierAuth:6/binary,
+		  1, SubAuthCount, IdentifierAuth:48/big,
 		  Rem1/binary>> -> ok
 	end,
 	SubAuthLen = SubAuthCount * 4,

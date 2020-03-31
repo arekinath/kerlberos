@@ -27,7 +27,7 @@
 
 -record(sid, {
 	revision :: integer(),
-	identifier_auth :: binary(),
+	identifier_auth :: integer(),
 	sub_auths :: [integer()]}).
 -record(sid_and_attributes, {
 	sid_ptr :: rpce:rpce_ptr(),
