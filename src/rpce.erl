@@ -199,12 +199,14 @@ read({pointer, UnderType}, S0 = #rpce_state{off = Off}) ->
 	Padding = padding_size(4, Off),
 	<<_:Padding/binary, Referent:4/binary, Rem1/binary>> = Rem0,
 	Ptr = #rpce_ptr{tag = Referent},
-	S1 = case Typ0 of
-		#{Ptr := UnderType} ->
+	S1 = case {Referent, Typ0} of
+		{<<0,0,0,0>>, _} ->
 			S0#rpce_state{r = Rem1, off = Off + Padding + 4};
-		#{Ptr := Other} ->
+		{_, #{Ptr := UnderType}} ->
+			S0#rpce_state{r = Rem1, off = Off + Padding + 4};
+		{_, #{Ptr := Other}} ->
 			error({type_confusion, Ptr, Other, UnderType});
-		_ ->
+		{_, _} ->
 			Def1 = gb_sets:add(Ptr, Def0),
 			Typ1 = Typ0#{Ptr => UnderType},
 			S0#rpce_state{
@@ -240,6 +242,7 @@ finish(S0 = #rpce_state{deferred = Defs0, ptrtype = Types}) ->
 			finish(S3)
 	end.
 
+get_ptr(#rpce_ptr{tag = <<0,0,0,0>>}, _) -> null;
 get_ptr(Ptr = #rpce_ptr{}, #rpce_state{ptrdata = PtrData}) ->
 	#{Ptr := Data} = PtrData,
 	Data.
