@@ -91,10 +91,10 @@ read(filetime, S0 = #rpce_state{r = Rem0, off = Off}) ->
 			{{USec, microsecond}, S1}
 	end;
 
-read({unicode_string, Len, MaxLen}, S0 = #rpce_state{r = Rem0, off = Off}) ->
+read({unicode_string, Len, _MaxLen}, S0 = #rpce_state{r = Rem0, off = Off}) ->
 	Padding = padding_size(4, Off),
 	<<_:Padding/binary,
-	  MaxLength:32/little, 0:32/little, Length:32/little,
+	  _MaxLength:32/little, 0:32/little, Length:32/little,
 	  Rem1/binary>> = Rem0,
 	ActualLen = Length * 2,
 	<<Data:ActualLen/binary, Rem2/binary>> = Rem1,
