@@ -39,9 +39,14 @@
 
 -opaque krb_client() :: pid().
 
--type kdc_spec() :: inet:ip_address() | inet:hostname() | {inet:ip_address() | inet:hostname(), Port :: integer()}.
--type open_option() :: {kdc, kdc_spec() | [kdc_spec()]} | {port, integer()}.
--type open_options() :: [open_option()].
+-type kdc_spec() :: inet:ip_address() | inet:hostname() |
+	{inet:ip_address() | inet:hostname(), Port :: integer()}.
+-type msecs() :: integer().
+-type open_options() :: #{
+	kdc => [kdc_spec()],
+	port => integer(),
+	ciphers => [krb_crypto:etype()],
+	timeout => msecs()}.
 
 -spec open(string()) -> {ok, krb_client()}.
 open(Realm) -> open(Realm, #{}).
@@ -123,15 +128,95 @@ retry_connect(IP, Port, Opts, Timeout, Retries) ->
 		R = {error, _} -> R
 	end.
 
-lookup_kdcs(Domain) ->
+lookup_kdcs(C0, Domain) ->
     Results = inet_res:lookup("_kerberos._udp." ++ Domain, in, srv),
-    [{Name, Port} || {_Prio, _Weight, Port, Name} <- Results].
+    #{kdc := Kdc0} = C0,
+    DNSKDCs = [{Name, Port} || {_Prio, _Weight, Port, Name} <- Results],
+    C0#{kdc => Kdc0 ++ DNSKDCs}.
 
-init([Realm, Opts]) ->
-	KdcPort = maps:get(port, Opts, 88),
-	CipherList = maps:get(ciphers, Opts, [aes256_hmac_sha1, aes128_hmac_sha1, rc4_hmac, des_md5, des_md4, des_crc]),
-	Timeout = maps:get(timeout, Opts, 1000),
-	CC = case Opts of
+add_realm_conf(C0, [], _Realm) -> C0;
+add_realm_conf(C0, [Path | Rest], Realm) ->
+	case file:read_file(Path) of
+		{ok, D} ->
+			case (catch krb5conf:parse(D)) of
+				{Co, Rem, _Pos} when is_list(Co) and is_binary(Rem) ->
+					LibDefs = proplists:get_value(<<"libdefaults">>, Co, []),
+					Realms = proplists:get_value(<<"realms">>, Co, []),
+					RealmConf = proplists:get_value(Realm, Realms, []),
+					Combined = LibDefs ++ RealmConf,
+					C1 = case proplists:get_value(<<"allow_weak_crypto">>, Combined) of
+						<<"true">> ->
+							#{ciphers := Cph0} = C0,
+							Cph1 = case lists:member(des_crc, Cph0) of
+								true -> Cph0;
+								false -> Cph0 ++ [des3_md5, rc4_hmac,
+									rc4_hmac_exp, des_md5, des_md4, des_crc]
+							end,
+							C0#{ciphers => Cph1};
+						<<"false">> ->
+							#{ciphers := Cph0} = C0,
+							Cph1 = Cph0 -- [des_crc, des_md4, des_md5,
+								des3_sha1_nokd, des3_md5, rc4_hmac,
+								rc4_hmac_exp],
+							C0#{ciphers => Cph1}
+					end,
+					C2 = case proplists:get_all_values(<<"kdc">>, Combined) of
+						[] -> C1;
+						KdcSpecBins ->
+							KdcSpecs = lists:map(fun (KdcSpecBin) ->
+								case binary:split(KdcSpecBin, [<<$:>>]) of
+									[HostnameBin, PortBin] ->
+										Hostname = unicode:characters_to_list(HostnameBin, utf8),
+										{Hostname, binary_to_integer(PortBin)};
+									[HostnameBin] ->
+										#{port := DefaultPort} = C1,
+										Hostname = unicode:characters_to_list(HostnameBin, utf8),
+										{Hostname, DefaultPort}
+								end
+							end, KdcSpecBins),
+							#{kdc := Kdc0} = C1,
+							Kdc1 = Kdc0 ++ KdcSpecs,
+							C1#{kdc => Kdc1}
+					end,
+					C3 = case proplists:get_value(<<"dns_lookup_kdc">>, Combined) of
+						<<"true">> ->
+							C2#{use_dns => true};
+						<<"false">> ->
+							C2#{use_dns => false}
+					end,
+					add_realm_conf(C3, Rest, Realm);
+				_ ->
+					add_realm_conf(C0, Rest, Realm)
+			end;
+		_ ->
+			add_realm_conf(C0, Rest, Realm)
+	end.
+
+init([Realm, Opts0]) ->
+	Conf0 = #{
+		port => 88,
+		use_dns => true,
+		timeout => 1000,
+		ciphers => [aes256_hmac_sha384, aes128_hmac_sha256, aes256_hmac_sha1,
+			aes128_hmac_sha1, des3_sha1],
+		kdc => []
+	},
+	Conf1 = add_realm_conf(Conf0, [
+		"/opt/local/etc/krb5/krb5.conf",
+		"/opt/local/etc/krb5.conf",
+		"/etc/krb5/krb5.conf",
+		"/etc/krb5.conf"
+	], unicode:characters_to_binary(Realm, utf8)),
+	Conf2 = maps:merge(Conf1, Opts0),
+	Conf3 = case Conf2 of
+		#{use_dns := true} ->
+			lookup_kdcs(Conf2, Realm);
+		_ ->
+			Conf2
+	end,
+	#{port := KdcPort, ciphers := CipherList, timeout := Timeout,
+	  kdc := Kdcs0} = Conf3,
+	CC = case Conf3 of
 		#{cc := CCPid} -> CCPid;
 		#{cc_mod := CCMod} ->
 			{ok, CCPid} = krbcc:start_link(CCMod, #{}),
@@ -140,18 +225,13 @@ init([Realm, Opts]) ->
 			{ok, CCPid} = krbcc:start_link(krbcc_ets, #{}),
 			CCPid
 	end,
-	Kdcs = case Opts of
-		#{kdc := L} when is_list(L) ->
-			lists:map(fun
-				({Host, Port}) -> {Host,Port};
-				(Host) -> {Host, KdcPort}
-			end, L);
-		#{kdc := {Host, Port}} -> [{Host, Port}];
-		#{kcd := Host} -> [{Host, KdcPort}];
-		_ -> lookup_kdcs(string:to_lower(Realm))
-	end,
+	Kdcs1 = lists:map(fun
+		({Host, Port}) -> {Host, Port};
+		(Host) -> {Host, KdcPort}
+	end, Kdcs0),
 	{ok, Sock} = gen_udp:open(0, [binary, {active, true}]),
-	{ok, unauthed, #state{realm = Realm, kdcs = Kdcs, usock = Sock, cipher_list = CipherList, timeout = Timeout, cc = CC}, 0}.
+	{ok, unauthed, #state{realm = Realm, kdcs = Kdcs1, usock = Sock,
+		cipher_list = CipherList, timeout = Timeout, cc = CC}, 0}.
 
 unauthed(timeout, S = #state{cc = CC, realm = Realm}) ->
 	case krbcc:find_tickets(CC, #{service_principal => ["krbtgt", Realm]}) of

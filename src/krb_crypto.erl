@@ -41,6 +41,7 @@
 
 -export([crc/1, crc/2, crc_unkey/3, hash_unkey/4]).
 
+-export_type([etype/0, ctype/0]).
 -type etype() :: des_crc | des_md4 | des_md5 | des3_md5 | des3_sha1 | aes128_hmac_sha1 | aes256_hmac_sha1 | rc4_hmac | rc4_hmac_exp | des3_sha1_nokd | aes128_hmac_sha256 | aes256_hmac_sha384.
 -type ctype() :: hmac_sha1_aes128 | hmac_sha1_aes256.
 

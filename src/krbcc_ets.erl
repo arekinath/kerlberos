@@ -57,7 +57,7 @@ find_tickets(#{user_principal := UPN}, S = #state{tickets = T}) ->
 		case K of
 			{UPN, SPN, Realm} ->
 				{Key, Ticket} = V,
-				[#{service_principal => UPN, realm => Realm,
+				[#{service_principal => SPN, realm => Realm,
 				   key => Key, ticket => Ticket} | Acc];
 			_ -> Acc
 		end

@@ -1,12 +1,12 @@
 .rebar
 ebin
 deps
-login_kerlberos
 priv/*.so
 c_src/*.o
-src/*.asn1db
 src/conf_parse.erl
 src/KRB5.erl
+src/krb5conf.erl
+src/*.asn1db
 asngen
 _build
 include/KRB5.hrl
