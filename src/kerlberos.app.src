@@ -10,6 +10,7 @@
                   stdlib,
                   asn1,
                   pbkdf2,
+                  lager,
                   neotoma
                  ]},
   {mod, { krlb_app, []}},

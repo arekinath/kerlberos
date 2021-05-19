@@ -28,22 +28,30 @@
 %% @doc kerberos crypto module (based on rfc3961/3962).
 -module(krb_crypto).
 -export([
-	string_to_key/3,
-	random_to_key/2,
-	encrypt/3, encrypt/4,
-	decrypt/3, decrypt/4,
-	checksum/4,
-	atom_to_etype/1,
-	etype_to_atom/1,
-	atom_to_ctype/1,
-	ctype_to_atom/1,
-	ctype_for_etype/1]).
+    default_etypes/0,
+    string_to_key/3,
+    random_to_key/2,
+    encrypt/3, encrypt/4,
+    decrypt/3, decrypt/4,
+    checksum/4,
+    atom_to_etype/1,
+    etype_to_atom/1,
+    atom_to_ctype/1,
+    ctype_to_atom/1,
+    ctype_for_etype/1]).
 
 -export([crc/1, crc/2, crc_unkey/3, hash_unkey/4]).
 
 -export_type([etype/0, ctype/0]).
 -type etype() :: des_crc | des_md4 | des_md5 | des3_md5 | des3_sha1 | aes128_hmac_sha1 | aes256_hmac_sha1 | rc4_hmac | rc4_hmac_exp | des3_sha1_nokd | aes128_hmac_sha256 | aes256_hmac_sha384.
 -type ctype() :: hmac_sha1_aes128 | hmac_sha1_aes256.
+
+default_etypes() ->
+    [aes256_hmac_sha384, aes128_hmac_sha256,
+     aes256_hmac_sha1, aes128_hmac_sha1,
+     des3_sha1, des3_md5,
+     des_md5, des_crc,
+     rc4_hmac_exp, rc4_hmac].
 
 -spec etype_to_atom(integer()) -> etype().
 etype_to_atom(1) -> des_crc;
@@ -52,10 +60,10 @@ etype_to_atom(3) -> des_md5;
 etype_to_atom(5) -> des3_md5;
 etype_to_atom(7) -> des3_sha1_nokd; % deprecated version
 etype_to_atom(16) -> des3_sha1;
-etype_to_atom(17) -> aes128_hmac_sha1;				% rfc3962
-etype_to_atom(18) -> aes256_hmac_sha1;				% rfc3962
-etype_to_atom(19) -> aes128_hmac_sha256;			% rfc8009
-etype_to_atom(20) -> aes256_hmac_sha384;			% rfc8009
+etype_to_atom(17) -> aes128_hmac_sha1;              % rfc3962
+etype_to_atom(18) -> aes256_hmac_sha1;              % rfc3962
+etype_to_atom(19) -> aes128_hmac_sha256;            % rfc8009
+etype_to_atom(20) -> aes256_hmac_sha384;            % rfc8009
 etype_to_atom(23) -> rc4_hmac;
 etype_to_atom(24) -> rc4_hmac_exp;
 etype_to_atom(_) -> error(unknown_etype).
@@ -106,34 +114,34 @@ ctype_for_etype(aes256_hmac_sha1) -> hmac_sha1_aes256;
 ctype_for_etype(E) -> error({no_ctype_for_etype, E}).
 
 -record(cryptspec, {
-	encfun :: {Mod :: atom(), Fun :: atom(), Args :: [term()]},
-	macfun :: {Mod :: atom(), Fun :: atom(), Args :: [term()]},
-	maclen :: integer(),
-	blocklen :: integer(),
-	padding = false :: boolean()
-	}).
+    encfun :: {Mod :: atom(), Fun :: atom(), Args :: [term()]},
+    macfun :: {Mod :: atom(), Fun :: atom(), Args :: [term()]},
+    maclen :: integer(),
+    blocklen :: integer(),
+    padding = false :: boolean()
+    }).
 
 -spec checksum(ctype(), binary(), binary(), cipher_options()) -> binary().
 checksum(hmac_sha1_aes128, Key, Data, Opts) ->
-	Usage = maps:get(usage, Opts, 1),
-	{Kc, _Ke, _Ki} = base_key_to_triad(aes128_hmac_sha1, Key, Usage),
-	crypto:macN(hmac, sha, Kc, Data, 12);
+    Usage = maps:get(usage, Opts, 1),
+    {Kc, _Ke, _Ki} = base_key_to_triad(aes128_hmac_sha1, Key, Usage),
+    crypto:macN(hmac, sha, Kc, Data, 12);
 checksum(hmac_sha1_aes256, Key, Data, Opts) ->
-	Usage = maps:get(usage, Opts, 1),
-	{Kc, _Ke, _Ki} = base_key_to_triad(aes256_hmac_sha1, Key, Usage),
-	crypto:macN(hmac, sha, Kc, Data, 12);
+    Usage = maps:get(usage, Opts, 1),
+    {Kc, _Ke, _Ki} = base_key_to_triad(aes256_hmac_sha1, Key, Usage),
+    crypto:macN(hmac, sha, Kc, Data, 12);
 checksum(hmac_sha1_des3_kd, Key, Data, Opts) ->
-	Usage = maps:get(usage, Opts, 1),
-	{Kc, _Ke, _Ki} = base_key_to_triad(des3_sha1, Key, Usage),
-	crypto:macN(hmac, sha, Kc, Data, 12);
+    Usage = maps:get(usage, Opts, 1),
+    {Kc, _Ke, _Ki} = base_key_to_triad(des3_sha1, Key, Usage),
+    crypto:macN(hmac, sha, Kc, Data, 12);
 checksum(hmac_sha256_aes128, Key, Data, Opts) ->
-	Usage = maps:get(usage, Opts, 1),
-	{Kc, _Ke, _Ki} = base_key_to_triad(aes128_hmac_sha256, Key, Usage),
-	crypto:macN(hmac, sha256, Kc, Data, 16);
+    Usage = maps:get(usage, Opts, 1),
+    {Kc, _Ke, _Ki} = base_key_to_triad(aes128_hmac_sha256, Key, Usage),
+    crypto:macN(hmac, sha256, Kc, Data, 16);
 checksum(hmac_sha384_aes256, Key, Data, Opts) ->
-	Usage = maps:get(usage, Opts, 1),
-	{Kc, _Ke, _Ki} = base_key_to_triad(aes256_hmac_sha384, Key, Usage),
-	crypto:macN(hmac, sha384, Kc, Data, 24);
+    Usage = maps:get(usage, Opts, 1),
+    {Kc, _Ke, _Ki} = base_key_to_triad(aes256_hmac_sha384, Key, Usage),
+    crypto:macN(hmac, sha384, Kc, Data, 24);
 checksum(C, _, _, _) -> error({unknown_ctype, C}).
 
 -spec encrypt(etype(), binary(), binary()) -> binary().
@@ -146,336 +154,336 @@ decrypt(Etype, Key, Data) -> one_time(Etype, Key, Data, #{encrypt => false}).
 
 -spec encrypt(etype(), binary(), binary(), cipher_options()) -> binary().
 encrypt(EType, Key, Data, Opts0) ->
-	Opts1 = Opts0#{encrypt => true},
-	one_time(EType, Key, Data, Opts1).
+    Opts1 = Opts0#{encrypt => true},
+    one_time(EType, Key, Data, Opts1).
 
 -spec decrypt(etype(), binary(), binary(), cipher_options()) -> binary().
 decrypt(EType, Key, Data, Opts0) ->
-	Opts1 = Opts0#{encrypt => false},
-	one_time(EType, Key, Data, Opts1).
+    Opts1 = Opts0#{encrypt => false},
+    one_time(EType, Key, Data, Opts1).
 
 one_time(des_crc, Key, Data, Opts) ->
-	Spec = #cryptspec{
-		encfun = {crypto, crypto_one_time, [des_cbc]},
-		macfun = {?MODULE, crc_unkey, []},
-		maclen = 4, blocklen = 8, padding = true
-	},
-	Triad = {Key, Key, Key},
-	IV = Key,
-	case Opts of
-		#{encrypt := true} ->
-			mac_then_encrypt(Triad, IV, Data, Spec);
-		#{encrypt := false} ->
-			de_mac_then_encrypt(Triad, IV, Data, Spec)
-	end;
+    Spec = #cryptspec{
+        encfun = {crypto, crypto_one_time, [des_cbc]},
+        macfun = {?MODULE, crc_unkey, []},
+        maclen = 4, blocklen = 8, padding = true
+    },
+    Triad = {Key, Key, Key},
+    IV = Key,
+    case Opts of
+        #{encrypt := true} ->
+            mac_then_encrypt(Triad, IV, Data, Spec);
+        #{encrypt := false} ->
+            de_mac_then_encrypt(Triad, IV, Data, Spec)
+    end;
 one_time(des_md4, Key, Data, Opts) ->
-	Spec = #cryptspec{
-		encfun = {crypto, crypto_one_time, [des_cbc]},
-		macfun = {?MODULE, hash_unkey, [md4]},
-		maclen = 16, blocklen = 8, padding = true
-	},
-	Triad = {Key, Key, Key},
-	IV = <<0:64>>,
-	case Opts of
-		#{encrypt := true} ->
-			mac_then_encrypt(Triad, IV, Data, Spec);
-		#{encrypt := false} ->
-			de_mac_then_encrypt(Triad, IV, Data, Spec)
-	end;
+    Spec = #cryptspec{
+        encfun = {crypto, crypto_one_time, [des_cbc]},
+        macfun = {?MODULE, hash_unkey, [md4]},
+        maclen = 16, blocklen = 8, padding = true
+    },
+    Triad = {Key, Key, Key},
+    IV = <<0:64>>,
+    case Opts of
+        #{encrypt := true} ->
+            mac_then_encrypt(Triad, IV, Data, Spec);
+        #{encrypt := false} ->
+            de_mac_then_encrypt(Triad, IV, Data, Spec)
+    end;
 one_time(des_md5, Key, Data, Opts) ->
-	Spec = #cryptspec{
-		encfun = {crypto, crypto_one_time, [des_cbc]},
-		macfun = {?MODULE, hash_unkey, [md5]},
-		maclen = 16, blocklen = 8, padding = true
-	},
-	Triad = {Key, Key, Key},
-	IV = <<0:64>>,
-	case Opts of
-		#{encrypt := true} ->
-			mac_then_encrypt(Triad, IV, Data, Spec);
-		#{encrypt := false} ->
-			de_mac_then_encrypt(Triad, IV, Data, Spec)
-	end;
+    Spec = #cryptspec{
+        encfun = {crypto, crypto_one_time, [des_cbc]},
+        macfun = {?MODULE, hash_unkey, [md5]},
+        maclen = 16, blocklen = 8, padding = true
+    },
+    Triad = {Key, Key, Key},
+    IV = <<0:64>>,
+    case Opts of
+        #{encrypt := true} ->
+            mac_then_encrypt(Triad, IV, Data, Spec);
+        #{encrypt := false} ->
+            de_mac_then_encrypt(Triad, IV, Data, Spec)
+    end;
 one_time(des3_md5, Key, Data, Opts) ->
-	Spec = #cryptspec{
-		encfun = {crypto, crypto_one_time, [des_ede3_cbc]},
-		macfun = {crypto, macN, [hmac, md5]},
-		maclen = 16, blocklen = 8, padding = true
-	},
-	Usage = maps:get(usage, Opts, 1),
-	Triad = base_key_to_triad(des3_md5, Key, Usage),
-	IV = <<0:64>>,
-	case Opts of
-		#{encrypt := true} ->
-			encrypt_and_mac(Triad, IV, Data, Spec);
-		#{encrypt := false} ->
-			de_encrypt_and_mac(Triad, IV, Data, Spec)
-	end;
+    Spec = #cryptspec{
+        encfun = {crypto, crypto_one_time, [des_ede3_cbc]},
+        macfun = {crypto, macN, [hmac, md5]},
+        maclen = 16, blocklen = 8, padding = true
+    },
+    Usage = maps:get(usage, Opts, 1),
+    Triad = base_key_to_triad(des3_md5, Key, Usage),
+    IV = <<0:64>>,
+    case Opts of
+        #{encrypt := true} ->
+            encrypt_and_mac(Triad, IV, Data, Spec);
+        #{encrypt := false} ->
+            de_encrypt_and_mac(Triad, IV, Data, Spec)
+    end;
 one_time(des3_sha1, Key, Data, Opts) ->
-	Spec = #cryptspec{
-		encfun = {crypto, crypto_one_time, [des_ede3_cbc]},
-		macfun = {crypto, macN, [hmac, sha]},
-		maclen = 20, blocklen = 8, padding = true
-	},
-	Usage = maps:get(usage, Opts, 1),
-	Triad = base_key_to_triad(des3_sha1, Key, Usage),
-	IV = <<0:64>>,
-	case Opts of
-		#{encrypt := true} ->
-			encrypt_and_mac(Triad, IV, Data, Spec);
-		#{encrypt := false} ->
-			de_encrypt_and_mac(Triad, IV, Data, Spec)
-	end;
+    Spec = #cryptspec{
+        encfun = {crypto, crypto_one_time, [des_ede3_cbc]},
+        macfun = {crypto, macN, [hmac, sha]},
+        maclen = 20, blocklen = 8, padding = true
+    },
+    Usage = maps:get(usage, Opts, 1),
+    Triad = base_key_to_triad(des3_sha1, Key, Usage),
+    IV = <<0:64>>,
+    case Opts of
+        #{encrypt := true} ->
+            encrypt_and_mac(Triad, IV, Data, Spec);
+        #{encrypt := false} ->
+            de_encrypt_and_mac(Triad, IV, Data, Spec)
+    end;
 one_time(aes128_hmac_sha1, Key, Data, Opts) ->
-	Spec = #cryptspec{
-		encfun = {crypto_cts, one_time, [aes_128_cbc]},
-		macfun = {crypto, macN, [hmac, sha]},
-		maclen = 12, blocklen = 16
-	},
-	Usage = maps:get(usage, Opts, 1),
-	Triad = base_key_to_triad(aes128_hmac_sha1, Key, Usage),
-	IV = <<0:128>>,
-	case Opts of
-		#{encrypt := true} ->
-			encrypt_and_mac(Triad, IV, Data, Spec);
-		#{encrypt := false} ->
-			de_encrypt_and_mac(Triad, IV, Data, Spec)
-	end;
+    Spec = #cryptspec{
+        encfun = {crypto_cts, one_time, [aes_128_cbc]},
+        macfun = {crypto, macN, [hmac, sha]},
+        maclen = 12, blocklen = 16
+    },
+    Usage = maps:get(usage, Opts, 1),
+    Triad = base_key_to_triad(aes128_hmac_sha1, Key, Usage),
+    IV = <<0:128>>,
+    case Opts of
+        #{encrypt := true} ->
+            encrypt_and_mac(Triad, IV, Data, Spec);
+        #{encrypt := false} ->
+            de_encrypt_and_mac(Triad, IV, Data, Spec)
+    end;
 one_time(aes256_hmac_sha1, Key, Data, Opts) ->
-	Spec = #cryptspec{
-		encfun = {crypto_cts, one_time, [aes_256_cbc]},
-		macfun = {crypto, macN, [hmac, sha]},
-		maclen = 12, blocklen = 16
-	},
-	Usage = maps:get(usage, Opts, 1),
-	Triad = base_key_to_triad(aes256_hmac_sha1, Key, Usage),
-	IV = <<0:128>>,
-	case Opts of
-		#{encrypt := true} ->
-			encrypt_and_mac(Triad, IV, Data, Spec);
-		#{encrypt := false} ->
-			de_encrypt_and_mac(Triad, IV, Data, Spec)
-	end;
+    Spec = #cryptspec{
+        encfun = {crypto_cts, one_time, [aes_256_cbc]},
+        macfun = {crypto, macN, [hmac, sha]},
+        maclen = 12, blocklen = 16
+    },
+    Usage = maps:get(usage, Opts, 1),
+    Triad = base_key_to_triad(aes256_hmac_sha1, Key, Usage),
+    IV = <<0:128>>,
+    case Opts of
+        #{encrypt := true} ->
+            encrypt_and_mac(Triad, IV, Data, Spec);
+        #{encrypt := false} ->
+            de_encrypt_and_mac(Triad, IV, Data, Spec)
+    end;
 one_time(aes128_hmac_sha256, Key, Data, Opts) ->
-	Spec = #cryptspec{
-		encfun = {crypto_cts, one_time, [aes_128_cbc]},
-		macfun = {crypto, macN, [hmac, sha256]},
-		maclen = 16, blocklen = 16
-	},
-	Usage = maps:get(usage, Opts, 1),
-	Triad = base_key_to_triad(aes128_hmac_sha256, Key, Usage),
-	IV = <<0:128>>,
-	case Opts of
-		#{encrypt := true} ->
-			encrypt_then_mac(Triad, IV, Data, Spec);
-		#{encrypt := false} ->
-			de_encrypt_then_mac(Triad, IV, Data, Spec)
-	end;
+    Spec = #cryptspec{
+        encfun = {crypto_cts, one_time, [aes_128_cbc]},
+        macfun = {crypto, macN, [hmac, sha256]},
+        maclen = 16, blocklen = 16
+    },
+    Usage = maps:get(usage, Opts, 1),
+    Triad = base_key_to_triad(aes128_hmac_sha256, Key, Usage),
+    IV = <<0:128>>,
+    case Opts of
+        #{encrypt := true} ->
+            encrypt_then_mac(Triad, IV, Data, Spec);
+        #{encrypt := false} ->
+            de_encrypt_then_mac(Triad, IV, Data, Spec)
+    end;
 one_time(aes256_hmac_sha384, Key, Data, Opts) ->
-	Spec = #cryptspec{
-		encfun = {crypto_cts, one_time, [aes_256_cbc]},
-		macfun = {crypto, macN, [hmac, sha384]},
-		maclen = 24, blocklen = 16
-	},
-	Usage = maps:get(usage, Opts, 1),
-	Triad = base_key_to_triad(aes256_hmac_sha384, Key, Usage),
-	IV = <<0:128>>,
-	case Opts of
-		#{encrypt := true} ->
-			encrypt_then_mac(Triad, IV, Data, Spec);
-		#{encrypt := false} ->
-			de_encrypt_then_mac(Triad, IV, Data, Spec)
-	end;
+    Spec = #cryptspec{
+        encfun = {crypto_cts, one_time, [aes_256_cbc]},
+        macfun = {crypto, macN, [hmac, sha384]},
+        maclen = 24, blocklen = 16
+    },
+    Usage = maps:get(usage, Opts, 1),
+    Triad = base_key_to_triad(aes256_hmac_sha384, Key, Usage),
+    IV = <<0:128>>,
+    case Opts of
+        #{encrypt := true} ->
+            encrypt_then_mac(Triad, IV, Data, Spec);
+        #{encrypt := false} ->
+            de_encrypt_then_mac(Triad, IV, Data, Spec)
+    end;
 one_time(rc4_hmac, Key, Data, Opts = #{encrypt := true}) ->
-	T = ms_usage_map(maps:get(usage, Opts, 1)),
-	K1 = crypto:mac(hmac, md5, Key, <<T:32/little>>),
-	K2 = K1,
-	Confounder = crypto:strong_rand_bytes(8),
-	PreMAC = <<Confounder/binary, Data/binary>>,
-	MAC = crypto:mac(hmac, md5, K2, PreMAC),
-	K3 = crypto:mac(hmac, md5, K1, MAC),
-	State = crypto:crypto_init(rc4, K3, true),
-	ConfEnc = crypto:crypto_update(State, Confounder),
-	DataEnc = crypto:crypto_update(State, Data),
-	<<>> = crypto:crypto_final(State),
-	<<MAC/binary, ConfEnc/binary, DataEnc/binary>>;
+    T = ms_usage_map(maps:get(usage, Opts, 1)),
+    K1 = crypto:mac(hmac, md5, Key, <<T:32/little>>),
+    K2 = K1,
+    Confounder = crypto:strong_rand_bytes(8),
+    PreMAC = <<Confounder/binary, Data/binary>>,
+    MAC = crypto:mac(hmac, md5, K2, PreMAC),
+    K3 = crypto:mac(hmac, md5, K1, MAC),
+    State = crypto:crypto_init(rc4, K3, true),
+    ConfEnc = crypto:crypto_update(State, Confounder),
+    DataEnc = crypto:crypto_update(State, Data),
+    <<>> = crypto:crypto_final(State),
+    <<MAC/binary, ConfEnc/binary, DataEnc/binary>>;
 one_time(rc4_hmac, Key, Data, Opts = #{encrypt := false}) ->
-	T = ms_usage_map(maps:get(usage, Opts, 1)),
-	K1 = crypto:mac(hmac, md5, Key, <<T:32/little>>),
-	K2 = K1,
-	<<MAC:16/binary, ConfEnc:16/binary, DataEnc/binary>> = Data,
-	K3 = crypto:mac(hmac, md5, K1, MAC),
-	State = crypto:crypto_init(rc4, K3, false),
-	Confounder = crypto:crypto_update(State, ConfEnc),
-	Plain = crypto:crypto_update(State, DataEnc),
-	<<>> = crypto:crypto_final(State),
-	PreMAC = <<Confounder/binary, Plain/binary>>,
-	MAC = crypto:mac(hmac, md5, K2, PreMAC),
-	Plain;
+    T = ms_usage_map(maps:get(usage, Opts, 1)),
+    K1 = crypto:mac(hmac, md5, Key, <<T:32/little>>),
+    K2 = K1,
+    <<MAC:16/binary, ConfEnc:16/binary, DataEnc/binary>> = Data,
+    K3 = crypto:mac(hmac, md5, K1, MAC),
+    State = crypto:crypto_init(rc4, K3, false),
+    Confounder = crypto:crypto_update(State, ConfEnc),
+    Plain = crypto:crypto_update(State, DataEnc),
+    <<>> = crypto:crypto_final(State),
+    PreMAC = <<Confounder/binary, Plain/binary>>,
+    MAC = crypto:mac(hmac, md5, K2, PreMAC),
+    Plain;
 one_time(E, _, _, _) -> error({unknown_etype, E}).
 
 -type protocol_key() :: {Kc :: binary(), Ke :: binary(), Ki :: binary()}.
 
 encrypt_and_mac({_Kc, Ke, Ki}, IV, Data, Spec = #cryptspec{}) ->
-	#cryptspec{encfun = {EncMod, EncFun, EncArgs},
-			   macfun = {MacMod, MacFun, MacArgs},
-			   maclen = MacLength,
-			   blocklen = BlockSize,
-			   padding = Pad} = Spec,
-	Confounder = crypto:strong_rand_bytes(BlockSize),
-	PreMAC = pad_block(Pad, <<Confounder/binary, Data/binary>>, BlockSize),
-	MAC = erlang:apply(MacMod, MacFun, MacArgs ++ [Ki, PreMAC, MacLength]),
-	Enc = erlang:apply(EncMod, EncFun, EncArgs ++ [Ke, IV, PreMAC, true]),
-	<<Enc/binary, MAC/binary>>.
+    #cryptspec{encfun = {EncMod, EncFun, EncArgs},
+               macfun = {MacMod, MacFun, MacArgs},
+               maclen = MacLength,
+               blocklen = BlockSize,
+               padding = Pad} = Spec,
+    Confounder = crypto:strong_rand_bytes(BlockSize),
+    PreMAC = pad_block(Pad, <<Confounder/binary, Data/binary>>, BlockSize),
+    MAC = erlang:apply(MacMod, MacFun, MacArgs ++ [Ki, PreMAC, MacLength]),
+    Enc = erlang:apply(EncMod, EncFun, EncArgs ++ [Ke, IV, PreMAC, true]),
+    <<Enc/binary, MAC/binary>>.
 
 encrypt_then_mac({_Kc, Ke, Ki}, IV, Data, Spec = #cryptspec{}) ->
-	#cryptspec{encfun = {EncMod, EncFun, EncArgs},
-			   macfun = {MacMod, MacFun, MacArgs},
-			   maclen = MacLength,
-			   blocklen = BlockSize,
-			   padding = Pad} = Spec,
-	Confounder = crypto:strong_rand_bytes(BlockSize),
-	PreMAC = pad_block(Pad, <<Confounder/binary, Data/binary>>, BlockSize),
-	Enc = erlang:apply(EncMod, EncFun, EncArgs ++ [Ke, IV, PreMAC, true]),
-	IVEnc = iolist_to_binary([IV, Enc]),
-	MAC = erlang:apply(MacMod, MacFun, MacArgs ++ [Ki, IVEnc, MacLength]),
-	<<Enc/binary, MAC/binary>>.
+    #cryptspec{encfun = {EncMod, EncFun, EncArgs},
+               macfun = {MacMod, MacFun, MacArgs},
+               maclen = MacLength,
+               blocklen = BlockSize,
+               padding = Pad} = Spec,
+    Confounder = crypto:strong_rand_bytes(BlockSize),
+    PreMAC = pad_block(Pad, <<Confounder/binary, Data/binary>>, BlockSize),
+    Enc = erlang:apply(EncMod, EncFun, EncArgs ++ [Ke, IV, PreMAC, true]),
+    IVEnc = iolist_to_binary([IV, Enc]),
+    MAC = erlang:apply(MacMod, MacFun, MacArgs ++ [Ki, IVEnc, MacLength]),
+    <<Enc/binary, MAC/binary>>.
 
 mac_then_encrypt({_Kc, Ke, Ki}, IV, Data, Spec = #cryptspec{}) ->
-	#cryptspec{encfun = {EncMod, EncFun, EncArgs},
-			   macfun = {MacMod, MacFun, MacArgs},
-			   maclen = MacLength,
-			   blocklen = BlockSize,
-			   padding = Pad} = Spec,
-	Confounder = crypto:strong_rand_bytes(BlockSize),
-	PreMAC = pad_block(Pad, <<Confounder/binary, 0:MacLength/unit:8, Data/binary>>, BlockSize),
-	MAC = erlang:apply(MacMod, MacFun, MacArgs ++ [Ki, PreMAC, MacLength]),
-	PostMAC = pad_block(Pad, <<Confounder/binary, MAC/binary, Data/binary>>, BlockSize),
-	erlang:apply(EncMod, EncFun, EncArgs ++ [Ke, IV, PostMAC, true]).
+    #cryptspec{encfun = {EncMod, EncFun, EncArgs},
+               macfun = {MacMod, MacFun, MacArgs},
+               maclen = MacLength,
+               blocklen = BlockSize,
+               padding = Pad} = Spec,
+    Confounder = crypto:strong_rand_bytes(BlockSize),
+    PreMAC = pad_block(Pad, <<Confounder/binary, 0:MacLength/unit:8, Data/binary>>, BlockSize),
+    MAC = erlang:apply(MacMod, MacFun, MacArgs ++ [Ki, PreMAC, MacLength]),
+    PostMAC = pad_block(Pad, <<Confounder/binary, MAC/binary, Data/binary>>, BlockSize),
+    erlang:apply(EncMod, EncFun, EncArgs ++ [Ke, IV, PostMAC, true]).
 
 de_mac_then_encrypt({_Kc, Ke, Ki}, IV, Data, Spec = #cryptspec{}) ->
-	#cryptspec{encfun = {EncMod, EncFun, EncArgs},
-			   macfun = {MacMod, MacFun, MacArgs},
-			   maclen = MacLength,
-			   blocklen = BlockSize} = Spec,
-	PostMAC = erlang:apply(EncMod, EncFun, EncArgs ++ [Ke, IV, Data, false]),
-	<<Confounder:BlockSize/binary, MAC:MacLength/binary, PaddedData/binary>> = PostMAC,
-	PreMAC = <<Confounder/binary, 0:MacLength/unit:8, PaddedData/binary>>,
-	OurMAC = erlang:apply(MacMod, MacFun, MacArgs ++ [Ki, PreMAC, MacLength]),
-	if
-		(OurMAC =:= MAC) -> ok;
-		true -> error({bad_mac, OurMAC, MAC})
-	end,
-	PaddedData.
+    #cryptspec{encfun = {EncMod, EncFun, EncArgs},
+               macfun = {MacMod, MacFun, MacArgs},
+               maclen = MacLength,
+               blocklen = BlockSize} = Spec,
+    PostMAC = erlang:apply(EncMod, EncFun, EncArgs ++ [Ke, IV, Data, false]),
+    <<Confounder:BlockSize/binary, MAC:MacLength/binary, PaddedData/binary>> = PostMAC,
+    PreMAC = <<Confounder/binary, 0:MacLength/unit:8, PaddedData/binary>>,
+    OurMAC = erlang:apply(MacMod, MacFun, MacArgs ++ [Ki, PreMAC, MacLength]),
+    if
+        (OurMAC =:= MAC) -> ok;
+        true -> error({bad_mac, OurMAC, MAC})
+    end,
+    PaddedData.
 
 de_encrypt_and_mac({_Kc, Ke, Ki}, IV, Data, Spec = #cryptspec{}) ->
-	#cryptspec{encfun = {EncMod, EncFun, EncArgs},
-			   macfun = {MacMod, MacFun, MacArgs},
-			   maclen = MacLength,
-			   blocklen = BlockSize} = Spec,
-	EncLen = byte_size(Data) - MacLength,
-	<<Enc:EncLen/binary, HMAC/binary>> = Data,
-	PreMAC = erlang:apply(EncMod, EncFun, EncArgs ++ [Ke, IV, Enc, false]),
-	OurHMAC = erlang:apply(MacMod, MacFun, MacArgs ++ [Ki, PreMAC, MacLength]),
-	if
-		(OurHMAC =:= HMAC) -> ok;
-		true -> error({bad_mac, OurHMAC, HMAC})
-	end,
-	<<_Confounder:BlockSize/binary, Plain/binary>> = PreMAC,
-	Plain.
+    #cryptspec{encfun = {EncMod, EncFun, EncArgs},
+               macfun = {MacMod, MacFun, MacArgs},
+               maclen = MacLength,
+               blocklen = BlockSize} = Spec,
+    EncLen = byte_size(Data) - MacLength,
+    <<Enc:EncLen/binary, HMAC/binary>> = Data,
+    PreMAC = erlang:apply(EncMod, EncFun, EncArgs ++ [Ke, IV, Enc, false]),
+    OurHMAC = erlang:apply(MacMod, MacFun, MacArgs ++ [Ki, PreMAC, MacLength]),
+    if
+        (OurHMAC =:= HMAC) -> ok;
+        true -> error({bad_mac, OurHMAC, HMAC})
+    end,
+    <<_Confounder:BlockSize/binary, Plain/binary>> = PreMAC,
+    Plain.
 
 de_encrypt_then_mac({_Kc, Ke, Ki}, IV, Data, Spec = #cryptspec{}) ->
-	#cryptspec{encfun = {EncMod, EncFun, EncArgs},
-			   macfun = {MacMod, MacFun, MacArgs},
-			   maclen = MacLength,
-			   blocklen = BlockSize} = Spec,
-	EncLen = byte_size(Data) - MacLength,
-	<<Enc:EncLen/binary, HMAC/binary>> = Data,
-	IVEnc = iolist_to_binary([IV, Enc]),
-	OurHMAC = erlang:apply(MacMod, MacFun, MacArgs ++ [Ki, IVEnc, MacLength]),
-	if
-		(OurHMAC =:= HMAC) -> ok;
-		true -> error({bad_mac, OurHMAC, HMAC})
-	end,
-	PreMAC = erlang:apply(EncMod, EncFun, EncArgs ++ [Ke, IV, Enc, false]),
-	<<_Confounder:BlockSize/binary, Plain/binary>> = PreMAC,
-	Plain.
+    #cryptspec{encfun = {EncMod, EncFun, EncArgs},
+               macfun = {MacMod, MacFun, MacArgs},
+               maclen = MacLength,
+               blocklen = BlockSize} = Spec,
+    EncLen = byte_size(Data) - MacLength,
+    <<Enc:EncLen/binary, HMAC/binary>> = Data,
+    IVEnc = iolist_to_binary([IV, Enc]),
+    OurHMAC = erlang:apply(MacMod, MacFun, MacArgs ++ [Ki, IVEnc, MacLength]),
+    if
+        (OurHMAC =:= HMAC) -> ok;
+        true -> error({bad_mac, OurHMAC, HMAC})
+    end,
+    PreMAC = erlang:apply(EncMod, EncFun, EncArgs ++ [Ke, IV, Enc, false]),
+    <<_Confounder:BlockSize/binary, Plain/binary>> = PreMAC,
+    Plain.
 
 -spec base_key_to_triad(etype(), binary(), integer()) -> protocol_key().
 base_key_to_triad(aes128_hmac_sha256, BaseKey, Usage) ->
-	Kc = aes_kdf(sha256, BaseKey, <<Usage:32/big, 16#99>>, 128),
-	Ke = aes_kdf(sha256, BaseKey, <<Usage:32/big, 16#AA>>, 128),
-	Ki = aes_kdf(sha256, BaseKey, <<Usage:32/big, 16#55>>, 128),
-	{Kc, Ke, Ki};
+    Kc = aes_kdf(sha256, BaseKey, <<Usage:32/big, 16#99>>, 128),
+    Ke = aes_kdf(sha256, BaseKey, <<Usage:32/big, 16#AA>>, 128),
+    Ki = aes_kdf(sha256, BaseKey, <<Usage:32/big, 16#55>>, 128),
+    {Kc, Ke, Ki};
 base_key_to_triad(aes256_hmac_sha384, BaseKey, Usage) ->
-	Kc = aes_kdf(sha384, BaseKey, <<Usage:32/big, 16#99>>, 192),
-	Ke = aes_kdf(sha384, BaseKey, <<Usage:32/big, 16#AA>>, 256),
-	Ki = aes_kdf(sha384, BaseKey, <<Usage:32/big, 16#55>>, 192),
-	{Kc, Ke, Ki};
+    Kc = aes_kdf(sha384, BaseKey, <<Usage:32/big, 16#99>>, 192),
+    Ke = aes_kdf(sha384, BaseKey, <<Usage:32/big, 16#AA>>, 256),
+    Ki = aes_kdf(sha384, BaseKey, <<Usage:32/big, 16#55>>, 192),
+    {Kc, Ke, Ki};
 base_key_to_triad(EType, BaseKey, Usage) ->
-	Cipher = case EType of
-		des_crc -> des_cbc;
-		des_md4 -> des_cbc;
-		des_md5 -> des_cbc;
-		des3_md5 -> des_ede3_cbc;
-		des3_sha1 -> des_ede3_cbc;
-		aes128_hmac_sha1 -> aes_128_cbc;
-		aes256_hmac_sha1 -> aes_256_cbc
-	end,
-	Kc = dk(Cipher, BaseKey, <<Usage:32/big, 16#99>>),
-	Ke = dk(Cipher, BaseKey, <<Usage:32/big, 16#aa>>),
-	Ki = dk(Cipher, BaseKey, <<Usage:32/big, 16#55>>),
-	{Kc, Ke, Ki}.
+    Cipher = case EType of
+        des_crc -> des_cbc;
+        des_md4 -> des_cbc;
+        des_md5 -> des_cbc;
+        des3_md5 -> des_ede3_cbc;
+        des3_sha1 -> des_ede3_cbc;
+        aes128_hmac_sha1 -> aes_128_cbc;
+        aes256_hmac_sha1 -> aes_256_cbc
+    end,
+    Kc = dk(Cipher, BaseKey, <<Usage:32/big, 16#99>>),
+    Ke = dk(Cipher, BaseKey, <<Usage:32/big, 16#aa>>),
+    Ki = dk(Cipher, BaseKey, <<Usage:32/big, 16#55>>),
+    {Kc, Ke, Ki}.
 
 -spec dr_kn(atom(), binary(), binary(), binary(), integer()) -> [binary()].
 dr_kn(_Cipher, _KNPrev, _Key, _IV, 0) -> [];
 dr_kn(Cipher, KNPrev, Key, IV, N) ->
-	Block = crypto:crypto_one_time(Cipher, Key, IV, KNPrev, true),
-	[Block | dr_kn(Cipher, Block, Key, IV, N - 1)].
+    Block = crypto:crypto_one_time(Cipher, Key, IV, KNPrev, true),
+    [Block | dr_kn(Cipher, Block, Key, IV, N - 1)].
 
 -spec dr(atom(), binary(), binary()) -> binary().
 dr(Cipher, BaseKey, Constant) ->
-	case Cipher of
-		des_cbc ->
-			BlockSizeBytes = 8, KeySizeBytes = 7;
-		des_ede3_cbc ->
-			BlockSizeBytes = 8, KeySizeBytes = 21;
-		_ ->
-			#{block_size := BlockSizeBytes, key_length := KeySizeBytes} =
-				crypto:cipher_info(Cipher)
-	end,
-	Blocks = (KeySizeBytes div BlockSizeBytes) + 1,
-	DRBlocks = iolist_to_binary(dr_kn(Cipher,
-		nfold(BlockSizeBytes * 8, Constant), BaseKey,
-		<<0:BlockSizeBytes/unit:8>>, Blocks)),
-	<<DR:KeySizeBytes/binary, _/binary>> = DRBlocks,
-	DR.
+    case Cipher of
+        des_cbc ->
+            BlockSizeBytes = 8, KeySizeBytes = 7;
+        des_ede3_cbc ->
+            BlockSizeBytes = 8, KeySizeBytes = 21;
+        _ ->
+            #{block_size := BlockSizeBytes, key_length := KeySizeBytes} =
+                crypto:cipher_info(Cipher)
+    end,
+    Blocks = (KeySizeBytes div BlockSizeBytes) + 1,
+    DRBlocks = iolist_to_binary(dr_kn(Cipher,
+        nfold(BlockSizeBytes * 8, Constant), BaseKey,
+        <<0:BlockSizeBytes/unit:8>>, Blocks)),
+    <<DR:KeySizeBytes/binary, _/binary>> = DRBlocks,
+    DR.
 
 -spec dk(atom(), binary(), binary()) -> binary().
 dk(Cipher, BaseKey, Constant) ->
-	DR = dr(Cipher, BaseKey, Constant),
-	case Cipher of
-		des_cbc ->
-			des_random_to_key(<<0:64>>, DR);
-		des_ede3_cbc ->
-			des3_random_to_key(DR);
-		_ ->
-			#{key_length := KeySize} = crypto:cipher_info(Cipher),
-			<<DK:KeySize/binary, _/binary>> = DR,
-			DK
-	end.
+    DR = dr(Cipher, BaseKey, Constant),
+    case Cipher of
+        des_cbc ->
+            des_random_to_key(<<0:64>>, DR);
+        des_ede3_cbc ->
+            des3_random_to_key(DR);
+        _ ->
+            #{key_length := KeySize} = crypto:cipher_info(Cipher),
+            <<DK:KeySize/binary, _/binary>> = DR,
+            DK
+    end.
 
 to_56bstr(B) ->
-	<< <<Low:7>> || <<_:1,Low:7>> <= B >>.
+    << <<Low:7>> || <<_:1,Low:7>> <= B >>.
 
 ms_usage_map(3) -> 8;
 ms_usage_map(9) -> 8;
 ms_usage_map(N) -> N.
 
 des_add_parity(B) ->
-	<< <<N:7,(odd_parity(N)):1>> || <<N:7>> <= B >>.
+    << <<N:7,(odd_parity(N)):1>> || <<N:7>> <= B >>.
 des_fix_parity(B) ->
-	<< <<N:7,(odd_parity(N)):1>> || <<N:7,_:1>> <= B >>.
+    << <<N:7,(odd_parity(N)):1>> || <<N:7,_:1>> <= B >>.
 odd_parity(N) ->
     Set = length([ 1 || <<1:1>> <= <<N>> ]),
     if (Set rem 2 == 1) -> 0; true -> 1 end.
@@ -483,29 +491,29 @@ odd_parity(N) ->
 bitrev(<<>>) -> <<>>;
 bitrev(<<N:1>>) -> <<N:1>>;
 bitrev(<<N:1, Rest/bitstring>>) ->
-	RestRev = bitrev(Rest),
-	<<RestRev/bitstring, N:1>>.
+    RestRev = bitrev(Rest),
+    <<RestRev/bitstring, N:1>>.
 
 -spec binxor(bitstring(), bitstring()) -> bitstring().
 binxor(<<>>, <<>>) -> <<>>;
 binxor(<<N:64>>, <<M:64>>) -> X = N bxor M, <<X:64>>;
 binxor(<<N:56>>, <<M:56>>) -> X = N bxor M, <<X:56>>;
 binxor(<<N:8, RestN/bitstring>>, <<M:8, RestM/bitstring>>) ->
-	Rest = binxor(RestN, RestM),
-	X = N bxor M,
-	<<X:8, Rest/bitstring>>;
+    Rest = binxor(RestN, RestM),
+    X = N bxor M,
+    <<X:8, Rest/bitstring>>;
 binxor(<<N:1, RestN/bitstring>>, <<M:1, RestM/bitstring>>) ->
-	Rest = binxor(RestN, RestM),
-	X = N bxor M,
-	<<X:1, Rest/bitstring>>.
+    Rest = binxor(RestN, RestM),
+    X = N bxor M,
+    <<X:1, Rest/bitstring>>.
 
 des_string_to_key_stage(State, _, <<>>) ->
-	State;
+    State;
 des_string_to_key_stage(State, Odd, <<Block:8/binary, Rest/binary>>) ->
-	As56 = to_56bstr(Block),
-	Xor = if (Odd) -> As56; (not Odd) -> bitrev(As56) end,
-	State2 = binxor(State, Xor),
-	des_string_to_key_stage(State2, (not Odd), Rest).
+    As56 = to_56bstr(Block),
+    Xor = if (Odd) -> As56; (not Odd) -> bitrev(As56) end,
+    State2 = binxor(State, Xor),
+    des_string_to_key_stage(State2, (not Odd), Rest).
 
 ms_string_to_key(Bin) ->
     crypto:hash(md4, unicode:characters_to_binary(Bin, utf8, {utf16, little})).
@@ -515,8 +523,8 @@ pad_block(false, B, _N) -> B.
 pad_block(B) -> pad_block(B, 8).
 pad_block(B, 1) -> B;
 pad_block(B, N) ->
-	PadSize = N - (byte_size(B) rem N),
-	<<B/binary, 0:PadSize/unit:8>>.
+    PadSize = N - (byte_size(B) rem N),
+    <<B/binary, 0:PadSize/unit:8>>.
 
 -spec string_to_key(etype(), binary(), binary()) -> binary().
 string_to_key(des_crc, String, Salt) -> des_string_to_key(String, Salt);
@@ -527,11 +535,11 @@ string_to_key(des3_sha1, String, Salt) -> des3_string_to_key(String, Salt);
 string_to_key(aes128_hmac_sha1, String, Salt) -> aes_string_to_key(aes_128_cbc, 16, String, Salt);
 string_to_key(aes256_hmac_sha1, String, Salt) -> aes_string_to_key(aes_256_cbc, 32, String, Salt);
 string_to_key(aes128_hmac_sha256, String, Salt) ->
-	SaltP = <<"aes128-cts-hmac-sha256-128", 0, Salt/binary>>,
-	aes2_string_to_key(aes128_hmac_sha256, String, SaltP);
+    SaltP = <<"aes128-cts-hmac-sha256-128", 0, Salt/binary>>,
+    aes2_string_to_key(aes128_hmac_sha256, String, SaltP);
 string_to_key(aes256_hmac_sha384, String, Salt) ->
-	SaltP = <<"aes256-cts-hmac-sha384-192", 0, Salt/binary>>,
-	aes2_string_to_key(aes256_hmac_sha384, String, SaltP);
+    SaltP = <<"aes256-cts-hmac-sha384-192", 0, Salt/binary>>,
+    aes2_string_to_key(aes256_hmac_sha384, String, SaltP);
 string_to_key(rc4_hmac, String, _Salt) -> ms_string_to_key(String);
 string_to_key(E, _, _) -> error({unknown_etype, E}).
 
@@ -548,59 +556,59 @@ random_to_key(aes128_hmac_sha384, Data) -> Data;
 random_to_key(E, _) -> error({unknown_etype, E}).
 
 aes_kdf(Hash, Key, Label, K) ->
-	K1 = crypto:mac(hmac, Hash, Key, <<1:32/big, Label/binary, 0, K:32/big>>),
-	<<D:K/bitstring, _/bitstring>> = K1,
-	D.
+    K1 = crypto:mac(hmac, Hash, Key, <<1:32/big, Label/binary, 0, K:32/big>>),
+    <<D:K/bitstring, _/bitstring>> = K1,
+    D.
 
 des_random_to_key(IV, Data) ->
-	DRBlocks = iolist_to_binary(dr_kn(des_cbc,
-		nfold(64, <<"kerberos">>), Data, IV, 2)),
-	<<DR:56/bitstring, _/binary>> = DRBlocks,
-	des_add_parity(DR).
+    DRBlocks = iolist_to_binary(dr_kn(des_cbc,
+        nfold(64, <<"kerberos">>), Data, IV, 2)),
+    <<DR:56/bitstring, _/binary>> = DRBlocks,
+    des_add_parity(DR).
 
 des3_string_to_key(String, Salt) ->
-	B0 = iolist_to_binary([String, Salt]),
-	B1 = nfold(168, B0),
-	B2 = des3_random_to_key(B1),
-	dk(des_ede3_cbc, B2, <<"kerberos">>).
+    B0 = iolist_to_binary([String, Salt]),
+    B1 = nfold(168, B0),
+    B2 = des3_random_to_key(B1),
+    dk(des_ede3_cbc, B2, <<"kerberos">>).
 
 split_des3_bits(<<>>) -> {<<>>, <<>>};
 split_des3_bits(<<A:7, B:1, Rest/bitstring>>) ->
-	{Ac0, Bc0} = split_des3_bits(Rest),
-	{<<A:7, (odd_parity(A)):1, Ac0/bitstring>>,
-	 <<Bc0/bitstring, B:1>>}.
+    {Ac0, Bc0} = split_des3_bits(Rest),
+    {<<A:7, (odd_parity(A)):1, Ac0/bitstring>>,
+     <<Bc0/bitstring, B:1>>}.
 
 des3_random_to_key(<<K0:56/bitstring, K1:56/bitstring, K2:56/bitstring>>) ->
-	{AcP0, Bc0} = split_des3_bits(K0),
-	{AcP1, Bc1} = split_des3_bits(K1),
-	{AcP2, Bc2} = split_des3_bits(K2),
-	<<B0:7>> = Bc0, <<B1:7>> = Bc1, <<B2:7>> = Bc2,
-	<<AcP0/bitstring, B0:7, (odd_parity(B0)):1,
-	  AcP1/bitstring, B1:7, (odd_parity(B1)):1,
-	  AcP2/bitstring, B2:7, (odd_parity(B2)):1>>.
+    {AcP0, Bc0} = split_des3_bits(K0),
+    {AcP1, Bc1} = split_des3_bits(K1),
+    {AcP2, Bc2} = split_des3_bits(K2),
+    <<B0:7>> = Bc0, <<B1:7>> = Bc1, <<B2:7>> = Bc2,
+    <<AcP0/bitstring, B0:7, (odd_parity(B0)):1,
+      AcP1/bitstring, B1:7, (odd_parity(B1)):1,
+      AcP2/bitstring, B2:7, (odd_parity(B2)):1>>.
 
 aes_random_to_key(Cipher, Data) ->
-	dk(Cipher, Data, <<"kerberos">>).
+    dk(Cipher, Data, <<"kerberos">>).
 
 des_string_to_key(String, Salt) ->
-	Padded = pad_block(<<String/binary, Salt/binary>>),
-	RawKey = des_string_to_key_stage(<<0:56>>, true, Padded),
-	RawKeyParity = des_add_parity(RawKey),
-	Crypt = crypto:crypto_one_time(des_cbc, RawKeyParity, RawKeyParity, Padded, true),
-	LastBlock = binary:part(Crypt, {byte_size(Crypt), -8}),
-	des_fix_parity(LastBlock).
+    Padded = pad_block(<<String/binary, Salt/binary>>),
+    RawKey = des_string_to_key_stage(<<0:56>>, true, Padded),
+    RawKeyParity = des_add_parity(RawKey),
+    Crypt = crypto:crypto_one_time(des_cbc, RawKeyParity, RawKeyParity, Padded, true),
+    LastBlock = binary:part(Crypt, {byte_size(Crypt), -8}),
+    des_fix_parity(LastBlock).
 
 aes2_string_to_key(EType, String, SaltP) ->
-	{Hash, Size} = case EType of
-		aes128_hmac_sha256 -> {sha256, 128};
-		aes256_hmac_sha384 -> {sha384, 256}
-	end,
-	{ok, TKey} = pbkdf2:pbkdf2(Hash, String, SaltP, 32768, Size div 8),
-	aes_kdf(Hash, TKey, <<"kerberos">>, Size).
+    {Hash, Size} = case EType of
+        aes128_hmac_sha256 -> {sha256, 128};
+        aes256_hmac_sha384 -> {sha384, 256}
+    end,
+    {ok, TKey} = pbkdf2:pbkdf2(Hash, String, SaltP, 32768, Size div 8),
+    aes_kdf(Hash, TKey, <<"kerberos">>, Size).
 
 aes_string_to_key(Cipher, Size, String, Salt) ->
-	{ok, KdfOut} = pbkdf2:pbkdf2(sha, String, Salt, 4096, Size),
-	aes_random_to_key(Cipher, KdfOut).
+    {ok, KdfOut} = pbkdf2:pbkdf2(sha, String, Salt, 4096, Size),
+    aes_random_to_key(Cipher, KdfOut).
 
 -spec nfold(integer(), bitstring()) -> bitstring().
 nfold(N, X) when is_integer(N) and is_binary(X) ->
@@ -675,14 +683,14 @@ lcm(A, B) -> abs(A*B div gcd(A,B)).
   16#b40bbe37, 16#c30c8ea1, 16#5a05df1b, 16#2d02ef8d}).
 
 crc_unkey(_Ki, Data, Len) ->
-	CRC = crc(Data),
-	<<Out:Len/binary, _/binary>> = CRC,
-	Out.
+    CRC = crc(Data),
+    <<Out:Len/binary, _/binary>> = CRC,
+    Out.
 
 hash_unkey(Algo, _Ki, Data, Len) ->
-	Hash = crypto:hash(Algo, Data),
-	<<Out:Len/binary, _/binary>> = Hash,
-	Out.
+    Hash = crypto:hash(Algo, Data),
+    <<Out:Len/binary, _/binary>> = Hash,
+    Out.
 
 -spec crc(binary()) -> binary().
 crc(B) when is_binary(B) -> << (crc(0, 0, B)):32/little >>.
@@ -692,169 +700,169 @@ crc(State, B) -> crc(State, 0, B).
 
 -spec crc(integer(), integer(), binary()) -> integer().
 crc(State, N, B) when N >= byte_size(B) ->
-	State;
+    State;
 crc(State, N, B) ->
-	Idx = (State bxor binary:at(B, N)) band 16#ff,
-	State2 = element(Idx + 1, ?crc_table) bxor (State bsr 8),
-	crc(State2, N+1, B).
+    Idx = (State bxor binary:at(B, N)) band 16#ff,
+    State2 = element(Idx + 1, ?crc_table) bxor (State bsr 8),
+    crc(State2, N+1, B).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
 rfc3961_nfold_1_test() ->
-	Input = <<"012345">>,
-	Output = base64:decode(<<"vgcmMSdrGVU=">>),
-	?assertMatch(Output, nfold(64, Input)).
+    Input = <<"012345">>,
+    Output = base64:decode(<<"vgcmMSdrGVU=">>),
+    ?assertMatch(Output, nfold(64, Input)).
 
 rfc3961_nfold_2_test() ->
-	Input = <<"password">>,
-	Output = base64:decode(<<"eKB7bK+F+g==">>),
-	?assertMatch(Output, nfold(56, Input)).
+    Input = <<"password">>,
+    Output = base64:decode(<<"eKB7bK+F+g==">>),
+    ?assertMatch(Output, nfold(56, Input)).
 
 rfc3961_nfold_3_test() ->
-	Input = <<"Rough Consensus, and Running Code">>,
-	Output = base64:decode(<<"u27TCHC38OA=">>),
-	?assertMatch(Output, nfold(64, Input)).
+    Input = <<"Rough Consensus, and Running Code">>,
+    Output = base64:decode(<<"u27TCHC38OA=">>),
+    ?assertMatch(Output, nfold(64, Input)).
 
 rfc3961_nfold_4_test() ->
-	Input = <<"password">>,
-	Output = base64:decode(<<"WeSoynwDhcPDez9tIAAkfLbmvVs+">>),
-	?assertMatch(Output, nfold(168, Input)).
+    Input = <<"password">>,
+    Output = base64:decode(<<"WeSoynwDhcPDez9tIAAkfLbmvVs+">>),
+    ?assertMatch(Output, nfold(168, Input)).
 
 rfc3961_nfold_5_test() ->
-	Input = <<"MASSACHVSETTS INSTITVTE OF TECHNOLOGY">>,
-	Output = base64:decode(<<"2zsNjwsGHmAygrMIpQhBIprXmPq5VAwb">>),
-	?assertMatch(Output, nfold(192, Input)).
+    Input = <<"MASSACHVSETTS INSTITVTE OF TECHNOLOGY">>,
+    Output = base64:decode(<<"2zsNjwsGHmAygrMIpQhBIprXmPq5VAwb">>),
+    ?assertMatch(Output, nfold(192, Input)).
 
 rfc3961_nfold_6_test() ->
-	Input = <<"Q">>,
-	Output = base64:decode(<<"UYpUohWoRSpRilSiFahFKlGKVKIV">>),
-	?assertMatch(Output, nfold(168, Input)).
+    Input = <<"Q">>,
+    Output = base64:decode(<<"UYpUohWoRSpRilSiFahFKlGKVKIV">>),
+    ?assertMatch(Output, nfold(168, Input)).
 
 rfc3961_nfold_7_test() ->
-	Input = <<"ba">>,
-	Output = base64:decode(<<"+yXVMa6JdEmfUv2S6phXxLokzyl+">>),
-	?assertMatch(Output, nfold(168, Input)).
+    Input = <<"ba">>,
+    Output = base64:decode(<<"+yXVMa6JdEmfUv2S6phXxLokzyl+">>),
+    ?assertMatch(Output, nfold(168, Input)).
 
 rfc3961_string_to_key_1_test() ->
-	Password = <<"password">>,
-	Salt = <<"ATHENA.MIT.EDUraeburn">>,
-	Key = base64:decode(<<"y8IvriNSmOM=">>),
-	?assertMatch(Key, string_to_key(des_crc, Password, Salt)).
+    Password = <<"password">>,
+    Salt = <<"ATHENA.MIT.EDUraeburn">>,
+    Key = base64:decode(<<"y8IvriNSmOM=">>),
+    ?assertMatch(Key, string_to_key(des_crc, Password, Salt)).
 
 rfc3961_string_to_key_2_test() ->
-	Password = <<"potatoe">>,
-	Salt = <<"WHITEHOUSE.GOVdanny">>,
-	Key = base64:decode(<<"3z0yp0/ZKgE=">>),
-	?assertMatch(Key, string_to_key(des_crc, Password, Salt)).
+    Password = <<"potatoe">>,
+    Salt = <<"WHITEHOUSE.GOVdanny">>,
+    Key = base64:decode(<<"3z0yp0/ZKgE=">>),
+    ?assertMatch(Key, string_to_key(des_crc, Password, Salt)).
 
 rfc3961_kd_1_test() ->
-	BaseKey = base64:decode(<<"3OBrH2TIV6EcPbV8UYmbLMF5EAjOlzuS">>),
-	Constant = <<16#0000000155:40/big>>,
-	DR = base64:decode(<<"k1B50USQp1wwk8Sm6MOwSccebucF">>),
-	DK = base64:decode(<<"klF50EWRp5tdMZLEp+nCibBJxx9u5gTN">>),
-	CalcDR = dr(des_ede3_cbc, BaseKey, Constant),
-	CalcDK = dk(des_ede3_cbc, BaseKey, Constant),
-	io:format("DR = ~999p\n", [DR]),
-	?assertMatch(DR, CalcDR),
-	io:format("DK = ~999p\n", [DK]),
-	?assertMatch(DK, CalcDK).
+    BaseKey = base64:decode(<<"3OBrH2TIV6EcPbV8UYmbLMF5EAjOlzuS">>),
+    Constant = <<16#0000000155:40/big>>,
+    DR = base64:decode(<<"k1B50USQp1wwk8Sm6MOwSccebucF">>),
+    DK = base64:decode(<<"klF50EWRp5tdMZLEp+nCibBJxx9u5gTN">>),
+    CalcDR = dr(des_ede3_cbc, BaseKey, Constant),
+    CalcDK = dk(des_ede3_cbc, BaseKey, Constant),
+    io:format("DR = ~999p\n", [DR]),
+    ?assertMatch(DR, CalcDR),
+    io:format("DK = ~999p\n", [DK]),
+    ?assertMatch(DK, CalcDK).
 
 rfc3961_des3_stk_1_test() ->
-	Salt = <<"ATHENA.MIT.EDUraeburn">>,
-	String = <<"password">>,
-	Key = base64:decode(<<"hQu1E1hUjNBehnaMMT47/vdRGTfc9yw+">>),
-	?assertMatch(Key, string_to_key(des3_md5, String, Salt)).
+    Salt = <<"ATHENA.MIT.EDUraeburn">>,
+    String = <<"password">>,
+    Key = base64:decode(<<"hQu1E1hUjNBehnaMMT47/vdRGTfc9yw+">>),
+    ?assertMatch(Key, string_to_key(des3_md5, String, Salt)).
 
 rfc3961_des3_stk_2_test() ->
-	Salt = <<"WHITEHOUSE.GOVdanny">>,
-	String = <<"potatoe">>,
-	Key = base64:decode(<<"380jPdCkMgTqbcQ3+xXgYbApecH3Tzd6">>),
-	?assertMatch(Key, string_to_key(des3_md5, String, Salt)).
+    Salt = <<"WHITEHOUSE.GOVdanny">>,
+    String = <<"potatoe">>,
+    Key = base64:decode(<<"380jPdCkMgTqbcQ3+xXgYbApecH3Tzd6">>),
+    ?assertMatch(Key, string_to_key(des3_md5, String, Salt)).
 
 rfc3961_crc_test() ->
-	?assertMatch(<<16#33bc3273:32/big>>, crc(<<"foo">>)),
-	?assertMatch(<<16#d6883eb8:32/big>>, crc(<<"test0123456789">>)),
-	?assertMatch(<<16#f78041e3:32/big>>, crc(<<"MASSACHVSETTS INSTITVTE OF TECHNOLOGY">>)).
+    ?assertMatch(<<16#33bc3273:32/big>>, crc(<<"foo">>)),
+    ?assertMatch(<<16#d6883eb8:32/big>>, crc(<<"test0123456789">>)),
+    ?assertMatch(<<16#f78041e3:32/big>>, crc(<<"MASSACHVSETTS INSTITVTE OF TECHNOLOGY">>)).
 
 rfc8009_kd_1_test() ->
-	BaseKey = base64:decode(<<"NwXZYIDBdyig6ADqtuDSPA==">>),
-	Kc = base64:decode(<<"sxoBikj1R3b0A+mjljJdww==">>),
-	Ke = base64:decode(<<"mxl90ejFYJ1uZ8PjfGLHLg==">>),
-	Ki = base64:decode(<<"n9oOVqstheFWmmiGlsJqbA==">>),
-	io:format("~9999p\n", [{Kc, Ke, Ki}]),
-	?assertMatch({Kc, Ke, Ki},
-		base_key_to_triad(aes128_hmac_sha256, BaseKey, 2)).
+    BaseKey = base64:decode(<<"NwXZYIDBdyig6ADqtuDSPA==">>),
+    Kc = base64:decode(<<"sxoBikj1R3b0A+mjljJdww==">>),
+    Ke = base64:decode(<<"mxl90ejFYJ1uZ8PjfGLHLg==">>),
+    Ki = base64:decode(<<"n9oOVqstheFWmmiGlsJqbA==">>),
+    io:format("~9999p\n", [{Kc, Ke, Ki}]),
+    ?assertMatch({Kc, Ke, Ki},
+        base_key_to_triad(aes128_hmac_sha256, BaseKey, 2)).
 
 rfc8009_kd_2_test() ->
-	BaseKey = base64:decode(<<"bUBNN/r3n53w0zVo0yBmmADrSDZHLqigJtFrcYJGDFI=">>),
-	Kc = base64:decode(<<"71cYvobMhJY9i7tQMen1xLpB8o+vaec9">>),
-	Ke = base64:decode(<<"VqsivuY9gte8Uif2dz+Op6XrHIJRYMODEpgMRC5cfkk=">>),
-	Ki = base64:decode(<<"abFlFOPNjla4IBDVxzAStiLE0A/8I+0f">>),
-	?assertMatch({Kc, Ke, Ki},
-		base_key_to_triad(aes256_hmac_sha384, BaseKey, 2)).
+    BaseKey = base64:decode(<<"bUBNN/r3n53w0zVo0yBmmADrSDZHLqigJtFrcYJGDFI=">>),
+    Kc = base64:decode(<<"71cYvobMhJY9i7tQMen1xLpB8o+vaec9">>),
+    Ke = base64:decode(<<"VqsivuY9gte8Uif2dz+Op6XrHIJRYMODEpgMRC5cfkk=">>),
+    Ki = base64:decode(<<"abFlFOPNjla4IBDVxzAStiLE0A/8I+0f">>),
+    ?assertMatch({Kc, Ke, Ki},
+        base_key_to_triad(aes256_hmac_sha384, BaseKey, 2)).
 
 rfc8009_stk_test() ->
-	Passphrase = <<"password">>,
-	SaltP = base64:decode(<<"YWVzMTI4LWN0cy1obWFjLXNoYTI1Ni0xMjgAEN+d14PlvIrOoXMOdDVfYUFUSEVOQS5NSVQuRURVcmFlYnVybg==">>),
-	Key = <<16#089BCA48B105EA6EA77CA5D2F39DC5E7:128/big>>,
-	?assertMatch(Key, aes2_string_to_key(aes128_hmac_sha256, Passphrase, SaltP)).
+    Passphrase = <<"password">>,
+    SaltP = base64:decode(<<"YWVzMTI4LWN0cy1obWFjLXNoYTI1Ni0xMjgAEN+d14PlvIrOoXMOdDVfYUFUSEVOQS5NSVQuRURVcmFlYnVybg==">>),
+    Key = <<16#089BCA48B105EA6EA77CA5D2F39DC5E7:128/big>>,
+    ?assertMatch(Key, aes2_string_to_key(aes128_hmac_sha256, Passphrase, SaltP)).
 
 rfc8009_stk_2_test() ->
-	Passphrase = <<"password">>,
-	SaltP = base64:decode(<<"YWVzMjU2LWN0cy1obWFjLXNoYTM4NC0xOTIAEN+d14PlvIrOoXMOdDVfYUFUSEVOQS5NSVQuRURVcmFlYnVybg==">>),
-	Key = <<16#45BD806DBF6A833A9CFFC1C94589A222367A79BC21C413718906E9F578A78467:256/big>>,
-	?assertMatch(Key, aes2_string_to_key(aes256_hmac_sha384, Passphrase, SaltP)).
+    Passphrase = <<"password">>,
+    SaltP = base64:decode(<<"YWVzMjU2LWN0cy1obWFjLXNoYTM4NC0xOTIAEN+d14PlvIrOoXMOdDVfYUFUSEVOQS5NSVQuRURVcmFlYnVybg==">>),
+    Key = <<16#45BD806DBF6A833A9CFFC1C94589A222367A79BC21C413718906E9F578A78467:256/big>>,
+    ?assertMatch(Key, aes2_string_to_key(aes256_hmac_sha384, Passphrase, SaltP)).
 
 rfc8009_sample_decrypt_5b_test() ->
-	Output = base64:decode(<<"hNfzB1TtmHurC/NQa+sJz7VUAs735od86Z4kflLRbtRCHf34l2w=">>),
-	BaseKey = base64:decode(<<"NwXZYIDBdyig6ADqtuDSPA==">>),
-	Input = decrypt(aes128_hmac_sha256, BaseKey, Output, #{usage => 2}),
-	?assertMatch(<<0,1,2,3,4,5>>, Input).
+    Output = base64:decode(<<"hNfzB1TtmHurC/NQa+sJz7VUAs735od86Z4kflLRbtRCHf34l2w=">>),
+    BaseKey = base64:decode(<<"NwXZYIDBdyig6ADqtuDSPA==">>),
+    Input = decrypt(aes128_hmac_sha256, BaseKey, Output, #{usage => 2}),
+    ?assertMatch(<<0,1,2,3,4,5>>, Input).
 
 rfc8009_sample_decrypt_256_test() ->
-	Output = base64:decode(<<"QAE+LfWOh1GVfSh4vNLW/hAcz9VWyx6ueds8PuhkKfKypgKshv727LZH1ilfrgd6H+tRdQjSwWtBkuAfYg==">>),
-	BaseKey = base64:decode(<<"bUBNN/r3n53w0zVo0yBmmADrSDZHLqigJtFrcYJGDFI=">>),
-	Input = base64:decode(<<"AAECAwQFBgcICQoLDA0ODxAREhMU">>),
-	?assertMatch(Input, decrypt(aes256_hmac_sha384, BaseKey, Output, #{usage => 2})).
+    Output = base64:decode(<<"QAE+LfWOh1GVfSh4vNLW/hAcz9VWyx6ueds8PuhkKfKypgKshv727LZH1ilfrgd6H+tRdQjSwWtBkuAfYg==">>),
+    BaseKey = base64:decode(<<"bUBNN/r3n53w0zVo0yBmmADrSDZHLqigJtFrcYJGDFI=">>),
+    Input = base64:decode(<<"AAECAwQFBgcICQoLDA0ODxAREhMU">>),
+    ?assertMatch(Input, decrypt(aes256_hmac_sha384, BaseKey, Output, #{usage => 2})).
 
 pcap_1_test() ->
-	Output = base64:decode(<<"Les525C4ZmMX+IsZRTf0ULeqLMbn6tEOZQdxcSfqH2DKIt4ngmsy55C1zDXhCYEYXlvBKMQKyWVgA8n/">>),
-	BaseKey = string_to_key(des3_sha1, <<"root">>, <<"EXAMPLE.COMrootadmin">>),
-	Decrypted = decrypt(des3_sha1, BaseKey, Output, #{usage => 1}),
-	Actual = base64:decode(<<"MBqgERgPMjAyMTA1MTcwNTIxMjZaoQUCAwSCcgAAAAA=">>),
-	?assertMatch(Actual, Decrypted).
+    Output = base64:decode(<<"Les525C4ZmMX+IsZRTf0ULeqLMbn6tEOZQdxcSfqH2DKIt4ngmsy55C1zDXhCYEYXlvBKMQKyWVgA8n/">>),
+    BaseKey = string_to_key(des3_sha1, <<"root">>, <<"EXAMPLE.COMrootadmin">>),
+    Decrypted = decrypt(des3_sha1, BaseKey, Output, #{usage => 1}),
+    Actual = base64:decode(<<"MBqgERgPMjAyMTA1MTcwNTIxMjZaoQUCAwSCcgAAAAA=">>),
+    ?assertMatch(Actual, Decrypted).
 
 loopback_test() ->
-	Input = <<"foobar">>,
-	BaseKey = string_to_key(des3_sha1, <<"foo">>, <<"EXAMPLE.COMfoo">>),
-	Encrypted = encrypt(des3_sha1, BaseKey, Input, #{usage => 1}),
-	Decrypted = decrypt(des3_sha1, BaseKey, Encrypted, #{usage => 1}),
-	?assertMatch(<<Input:(byte_size(Input))/binary, _/binary>>, Decrypted).
+    Input = <<"foobar">>,
+    BaseKey = string_to_key(des3_sha1, <<"foo">>, <<"EXAMPLE.COMfoo">>),
+    Encrypted = encrypt(des3_sha1, BaseKey, Input, #{usage => 1}),
+    Decrypted = decrypt(des3_sha1, BaseKey, Encrypted, #{usage => 1}),
+    ?assertMatch(<<Input:(byte_size(Input))/binary, _/binary>>, Decrypted).
 
 loopback_2_test() ->
-	Input = <<"foobar">>,
-	BaseKey = string_to_key(aes128_hmac_sha256, <<"foo">>, <<"EXAMPLE.COMfoo">>),
-	Encrypted = encrypt(aes128_hmac_sha256, BaseKey, Input, #{usage => 1}),
-	Decrypted = decrypt(aes128_hmac_sha256, BaseKey, Encrypted, #{usage => 1}),
-	?assertMatch(Input, Decrypted).
+    Input = <<"foobar">>,
+    BaseKey = string_to_key(aes128_hmac_sha256, <<"foo">>, <<"EXAMPLE.COMfoo">>),
+    Encrypted = encrypt(aes128_hmac_sha256, BaseKey, Input, #{usage => 1}),
+    Decrypted = decrypt(aes128_hmac_sha256, BaseKey, Encrypted, #{usage => 1}),
+    ?assertMatch(Input, Decrypted).
 
 pcap_2_test() ->
-	Output = base64:decode(<<"K40hf8zUDGP+I/8kW6JRW9qve26CFr+86jdfL912V+n3A0eviW49tCYirQFHdP2odOn5uqy+zw==">>),
-	BaseKey = string_to_key(aes256_hmac_sha1, <<"root">>, <<"EXAMPLE.COMroot">>),
-	Input = base64:decode(<<"MBmgERgPMjAyMTA1MTgwMzU2MDZaoQQCAgMh">>),
-	?assertMatch(Input, decrypt(aes256_hmac_sha1, BaseKey, Output, #{usage => 1})).
+    Output = base64:decode(<<"K40hf8zUDGP+I/8kW6JRW9qve26CFr+86jdfL912V+n3A0eviW49tCYirQFHdP2odOn5uqy+zw==">>),
+    BaseKey = string_to_key(aes256_hmac_sha1, <<"root">>, <<"EXAMPLE.COMroot">>),
+    Input = base64:decode(<<"MBmgERgPMjAyMTA1MTgwMzU2MDZaoQQCAgMh">>),
+    ?assertMatch(Input, decrypt(aes256_hmac_sha1, BaseKey, Output, #{usage => 1})).
 
 pcap_3_test() ->
-	Output = base64:decode(<<"zywlQYED3qgionoqmuNPa3VPJp9a2347o5NDGAyD+Qq14JglvsyJOw==">>),
-	BaseKey = string_to_key(des_crc, <<"root">>, <<"EXAMPLE.COMroot">>),
-	Input = base64:decode(<<"MBmgERgPMjAyMTA1MTgwNDAwMzVaoQQCAgEqAA==">>),
-	?assertMatch(Input, decrypt(des_crc, BaseKey, Output, #{usage => 1})).
+    Output = base64:decode(<<"zywlQYED3qgionoqmuNPa3VPJp9a2347o5NDGAyD+Qq14JglvsyJOw==">>),
+    BaseKey = string_to_key(des_crc, <<"root">>, <<"EXAMPLE.COMroot">>),
+    Input = base64:decode(<<"MBmgERgPMjAyMTA1MTgwNDAwMzVaoQQCAgEqAA==">>),
+    ?assertMatch(Input, decrypt(des_crc, BaseKey, Output, #{usage => 1})).
 
 pcap_4_test() ->
-	Output = base64:decode(<<"VB8utLYRqScFZiSEO/8nwACAcBMCPKLaChTgmOr8hGRoftvqiKI7MxFs/nz74FsjTQmydgr4OsNsfJ9i">>),
-	BaseKey = string_to_key(aes128_hmac_sha256, <<"root">>, <<"EXAMPLE.COMroot">>),
-	Input = base64:decode(<<"MBqgERgPMjAyMTA1MTgwNDE2NTNaoQUCAwr2Cg==">>),
-	?assertMatch(Input, decrypt(aes128_hmac_sha256, BaseKey, Output, #{usage => 1})).
+    Output = base64:decode(<<"VB8utLYRqScFZiSEO/8nwACAcBMCPKLaChTgmOr8hGRoftvqiKI7MxFs/nz74FsjTQmydgr4OsNsfJ9i">>),
+    BaseKey = string_to_key(aes128_hmac_sha256, <<"root">>, <<"EXAMPLE.COMroot">>),
+    Input = base64:decode(<<"MBqgERgPMjAyMTA1MTgwNDE2NTNaoQUCAwr2Cg==">>),
+    ?assertMatch(Input, decrypt(aes128_hmac_sha256, BaseKey, Output, #{usage => 1})).
 
 -endif.
