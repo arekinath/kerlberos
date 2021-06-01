@@ -31,21 +31,39 @@
     default_etypes/0,
     string_to_key/3,
     random_to_key/2,
-    encrypt/3, encrypt/4,
-    decrypt/3, decrypt/4,
-    checksum/4,
+    encrypt/2, encrypt/3,
+    decrypt/2, decrypt/3,
+    checksum/3,
     atom_to_etype/1,
     etype_to_atom/1,
     atom_to_ctype/1,
     ctype_to_atom/1,
-    ctype_for_etype/1]).
+    ctype_for_etype/1,
+    base_key_to_ck_key/1]).
 
 -export([crc/1, crc/2, crc_unkey/3, hash_unkey/4]).
 
--export_type([etype/0, ctype/0]).
--type etype() :: des_crc | des_md4 | des_md5 | des3_md5 | des3_sha1 | aes128_hmac_sha1 | aes256_hmac_sha1 | rc4_hmac | rc4_hmac_exp | des3_sha1_nokd | aes128_hmac_sha256 | aes256_hmac_sha384.
--type ctype() :: hmac_sha1_aes128 | hmac_sha1_aes256.
+-export_type([
+    etype/0,
+    ctype/0,
+    base_key/0,
+    ck_key/0,
+    usage/0]).
 
+-type etype() :: des_crc | des_md4 | des_md5 | des3_md5 | des3_sha1 |
+	aes128_hmac_sha1 | aes256_hmac_sha1 | rc4_hmac | rc4_hmac_exp |
+	des3_sha1_nokd | aes128_hmac_sha256 | aes256_hmac_sha384.
+-type ctype() :: hmac_sha1_aes128 | hmac_sha1_aes256 | hmac_sha256_aes128 |
+	hmac_sha384_aes256 | hmac_sha1_des3_kd | crc32 | md4 | md5.
+
+-include("krb_key_records.hrl").
+
+-opaque base_key() :: #krb_base_key{}.
+-opaque ck_key() :: #krb_ck_key{}.
+-type protocol_key() :: {Kc :: binary(), Ke :: binary(), Ki :: binary()}.
+-type usage() :: integer().
+
+-spec default_etypes() -> [etype()].
 default_etypes() ->
     [aes256_hmac_sha384, aes128_hmac_sha256,
      aes256_hmac_sha1, aes128_hmac_sha1,
@@ -113,6 +131,10 @@ ctype_for_etype(aes128_hmac_sha1) -> hmac_sha1_aes128;
 ctype_for_etype(aes256_hmac_sha1) -> hmac_sha1_aes256;
 ctype_for_etype(E) -> error({no_ctype_for_etype, E}).
 
+-spec base_key_to_ck_key(base_key()) -> ck_key().
+base_key_to_ck_key(#krb_base_key{etype = EType, key = Key}) ->
+	#krb_ck_key{ctype = ctype_for_etype(EType), key = Key}.
+
 -record(cryptspec, {
     encfun :: {Mod :: atom(), Fun :: atom(), Args :: [term()]},
     macfun :: {Mod :: atom(), Fun :: atom(), Args :: [term()]},
@@ -121,44 +143,46 @@ ctype_for_etype(E) -> error({no_ctype_for_etype, E}).
     padding = false :: boolean()
     }).
 
--spec checksum(ctype(), binary(), binary(), cipher_options()) -> binary().
-checksum(hmac_sha1_aes128, Key, Data, Opts) ->
+-spec checksum(ck_key(), binary(), cipher_options()) -> binary().
+checksum(#krb_ck_key{ctype = hmac_sha1_aes128, key = Key}, Data, Opts) ->
     Usage = maps:get(usage, Opts, 1),
     {Kc, _Ke, _Ki} = base_key_to_triad(aes128_hmac_sha1, Key, Usage),
     crypto:macN(hmac, sha, Kc, Data, 12);
-checksum(hmac_sha1_aes256, Key, Data, Opts) ->
+checksum(#krb_ck_key{ctype = hmac_sha1_aes256, key = Key}, Data, Opts) ->
     Usage = maps:get(usage, Opts, 1),
     {Kc, _Ke, _Ki} = base_key_to_triad(aes256_hmac_sha1, Key, Usage),
     crypto:macN(hmac, sha, Kc, Data, 12);
-checksum(hmac_sha1_des3_kd, Key, Data, Opts) ->
+checksum(#krb_ck_key{ctype = hmac_sha1_des3_kd, key = Key}, Data, Opts) ->
     Usage = maps:get(usage, Opts, 1),
     {Kc, _Ke, _Ki} = base_key_to_triad(des3_sha1, Key, Usage),
     crypto:macN(hmac, sha, Kc, Data, 12);
-checksum(hmac_sha256_aes128, Key, Data, Opts) ->
+checksum(#krb_ck_key{ctype = hmac_sha256_aes128, key = Key}, Data, Opts) ->
     Usage = maps:get(usage, Opts, 1),
     {Kc, _Ke, _Ki} = base_key_to_triad(aes128_hmac_sha256, Key, Usage),
     crypto:macN(hmac, sha256, Kc, Data, 16);
-checksum(hmac_sha384_aes256, Key, Data, Opts) ->
+checksum(#krb_ck_key{ctype = hmac_sha384_aes256, key = Key}, Data, Opts) ->
     Usage = maps:get(usage, Opts, 1),
     {Kc, _Ke, _Ki} = base_key_to_triad(aes256_hmac_sha384, Key, Usage),
     crypto:macN(hmac, sha384, Kc, Data, 24);
-checksum(C, _, _, _) -> error({unknown_ctype, C}).
+checksum(#krb_ck_key{ctype = C}, _, _) -> error({unknown_ctype, C}).
 
--spec encrypt(etype(), binary(), binary()) -> binary().
-encrypt(Etype, Key, Data) -> one_time(Etype, Key, Data, #{encrypt => true}).
+-spec encrypt(base_key(), binary()) -> binary().
+encrypt(#krb_base_key{etype = EType, key = Key}, Data) ->
+	one_time(EType, Key, Data, #{encrypt => true}).
 
--spec decrypt(etype(), binary(), binary()) -> binary().
-decrypt(Etype, Key, Data) -> one_time(Etype, Key, Data, #{encrypt => false}).
+-spec decrypt(base_key(), binary()) -> binary().
+decrypt(#krb_base_key{etype = EType, key = Key}, Data) ->
+	one_time(EType, Key, Data, #{encrypt => false}).
 
--type cipher_options() :: #{usage => integer()}.
+-type cipher_options() :: #{usage => usage()}.
 
--spec encrypt(etype(), binary(), binary(), cipher_options()) -> binary().
-encrypt(EType, Key, Data, Opts0) ->
+-spec encrypt(base_key(), binary(), cipher_options()) -> binary().
+encrypt(#krb_base_key{etype = EType, key = Key}, Data, Opts0) ->
     Opts1 = Opts0#{encrypt => true},
     one_time(EType, Key, Data, Opts1).
 
--spec decrypt(etype(), binary(), binary(), cipher_options()) -> binary().
-decrypt(EType, Key, Data, Opts0) ->
+-spec decrypt(base_key(), binary(), cipher_options()) -> binary().
+decrypt(#krb_base_key{etype = EType, key = Key}, Data, Opts0) ->
     Opts1 = Opts0#{encrypt => false},
     one_time(EType, Key, Data, Opts1).
 
@@ -321,8 +345,6 @@ one_time(rc4_hmac, Key, Data, Opts = #{encrypt := false}) ->
     MAC = crypto:mac(hmac, md5, K2, PreMAC),
     Plain;
 one_time(E, _, _, _) -> error({unknown_etype, E}).
-
--type protocol_key() :: {Kc :: binary(), Ke :: binary(), Ki :: binary()}.
 
 encrypt_and_mac({_Kc, Ke, Ki}, IV, Data, Spec = #cryptspec{}) ->
     #cryptspec{encfun = {EncMod, EncFun, EncArgs},
@@ -518,41 +540,68 @@ des_string_to_key_stage(State, Odd, <<Block:8/binary, Rest/binary>>) ->
 ms_string_to_key(Bin) ->
     crypto:hash(md4, unicode:characters_to_binary(Bin, utf8, {utf16, little})).
 
+
+-spec pad_block(boolean(), binary(), integer()) -> binary().
 pad_block(true, B, N) -> pad_block(B, N);
 pad_block(false, B, _N) -> B.
+-spec pad_block(binary()) -> binary().
 pad_block(B) -> pad_block(B, 8).
+-spec pad_block(binary(), integer()) -> binary().
 pad_block(B, 1) -> B;
 pad_block(B, N) ->
     PadSize = N - (byte_size(B) rem N),
     <<B/binary, 0:PadSize/unit:8>>.
 
--spec string_to_key(etype(), binary(), binary()) -> binary().
-string_to_key(des_crc, String, Salt) -> des_string_to_key(String, Salt);
-string_to_key(des_md4, String, Salt) -> des_string_to_key(String, Salt);
-string_to_key(des_md5, String, Salt) -> des_string_to_key(String, Salt);
-string_to_key(des3_md5, String, Salt) -> des3_string_to_key(String, Salt);
-string_to_key(des3_sha1, String, Salt) -> des3_string_to_key(String, Salt);
-string_to_key(aes128_hmac_sha1, String, Salt) -> aes_string_to_key(aes_128_cbc, 16, String, Salt);
-string_to_key(aes256_hmac_sha1, String, Salt) -> aes_string_to_key(aes_256_cbc, 32, String, Salt);
+-spec string_to_key(etype(), binary(), binary()) -> base_key().
+string_to_key(des_crc, String, Salt) ->
+    #krb_base_key{etype = des_crc, key = des_string_to_key(String, Salt)};
+string_to_key(des_md4, String, Salt) ->
+    #krb_base_key{etype = des_md4, key = des_string_to_key(String, Salt)};
+string_to_key(des_md5, String, Salt) ->
+    #krb_base_key{etype = des_md5, key = des_string_to_key(String, Salt)};
+string_to_key(des3_md5, String, Salt) ->
+    #krb_base_key{etype = des3_md5, key = des3_string_to_key(String, Salt)};
+string_to_key(des3_sha1, String, Salt) ->
+    #krb_base_key{etype = des3_sha1, key = des3_string_to_key(String, Salt)};
+string_to_key(aes128_hmac_sha1, String, Salt) ->
+    #krb_base_key{etype = aes128_hmac_sha1,
+                  key = aes_string_to_key(aes_128_cbc, 16, String, Salt)};
+string_to_key(aes256_hmac_sha1, String, Salt) ->
+    #krb_base_key{etype = aes256_hmac_sha1,
+                  key = aes_string_to_key(aes_256_cbc, 32, String, Salt)};
 string_to_key(aes128_hmac_sha256, String, Salt) ->
     SaltP = <<"aes128-cts-hmac-sha256-128", 0, Salt/binary>>,
-    aes2_string_to_key(aes128_hmac_sha256, String, SaltP);
+    #krb_base_key{etype = aes128_hmac_sha256,
+                  key = aes2_string_to_key(aes128_hmac_sha256, String, SaltP)};
 string_to_key(aes256_hmac_sha384, String, Salt) ->
     SaltP = <<"aes256-cts-hmac-sha384-192", 0, Salt/binary>>,
-    aes2_string_to_key(aes256_hmac_sha384, String, SaltP);
-string_to_key(rc4_hmac, String, _Salt) -> ms_string_to_key(String);
+    #krb_base_key{etype = aes256_hmac_sha384,
+                  key = aes2_string_to_key(aes256_hmac_sha384, String, SaltP)};
+string_to_key(rc4_hmac, String, _Salt) ->
+    #krb_base_key{etype = rc4_hmac, key = ms_string_to_key(String)};
 string_to_key(E, _, _) -> error({unknown_etype, E}).
 
--spec random_to_key(etype(), binary()) -> binary().
-random_to_key(des_crc, Data) -> des_random_to_key(Data, Data);
-random_to_key(des_md4, Data) -> des_random_to_key(<<0:64>>, Data);
-random_to_key(des_md5, Data) -> des_random_to_key(<<0:64>>, Data);
-random_to_key(des3_md5, Data) -> des3_random_to_key(Data);
-random_to_key(des3_sha1, Data) -> des3_random_to_key(Data);
-random_to_key(aes128_hmac_sha1, Data) -> aes_random_to_key(aes_128_cbc, Data);
-random_to_key(aes256_hmac_sha1, Data) -> aes_random_to_key(aes_256_cbc, Data);
-random_to_key(aes128_hmac_sha256, Data) -> Data;
-random_to_key(aes128_hmac_sha384, Data) -> Data;
+-spec random_to_key(etype(), binary()) -> base_key().
+random_to_key(des_crc, Data) ->
+    #krb_base_key{etype = des_crc, key = des_random_to_key(Data, Data)};
+random_to_key(des_md4, Data) ->
+    #krb_base_key{etype = des_md4, key = des_random_to_key(<<0:64>>, Data)};
+random_to_key(des_md5, Data) ->
+    #krb_base_key{etype = des_md5, key = des_random_to_key(<<0:64>>, Data)};
+random_to_key(des3_md5, Data) ->
+    #krb_base_key{etype = des3_md5, key = des3_random_to_key(Data)};
+random_to_key(des3_sha1, Data) ->
+    #krb_base_key{etype = des3_sha1, key = des3_random_to_key(Data)};
+random_to_key(aes128_hmac_sha1, Data) ->
+    #krb_base_key{etype = aes128_hmac_sha1,
+                  key = aes_random_to_key(aes_128_cbc, Data)};
+random_to_key(aes256_hmac_sha1, Data) ->
+    #krb_base_key{etype = aes256_hmac_sha1,
+                  key = aes_random_to_key(aes_256_cbc, Data)};
+random_to_key(aes128_hmac_sha256, Data) ->
+    #krb_base_key{etype = aes128_hmac_sha256, key = Data};
+random_to_key(aes256_hmac_sha384, Data) ->
+    #krb_base_key{etype = aes256_hmac_sha384, key = Data};
 random_to_key(E, _) -> error({unknown_etype, E}).
 
 aes_kdf(Hash, Key, Label, K) ->

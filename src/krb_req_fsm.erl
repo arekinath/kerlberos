@@ -68,7 +68,7 @@ await(Pid) ->
     proto :: pid(),
     req :: undefined | reference(),
     err :: undefined | term(),
-    result :: {error, term()} | {ok, term()},
+    result :: undefined | {error, term()} | {ok, term()},
     awaiters = [] :: [gen_statem:from()]
     }).
 
@@ -89,7 +89,7 @@ wait({call, From}, await, S0 = #?MODULE{awaiters = Aws0, type = Type,
             {next_state, tcp, S1}
     end.
 
-terminate(normal, State, #?MODULE{}) ->
+terminate(normal, _State, #?MODULE{}) ->
     ok;
 terminate(Why, State, #?MODULE{}) ->
     lager:debug("terminating from ~p due to ~p", [State, Why]),

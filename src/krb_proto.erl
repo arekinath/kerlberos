@@ -29,6 +29,9 @@
 
 -compile([{parse_transform, lager_transform}]).
 
+-include("krb_key_records.hrl").
+-include("KRB5.hrl").
+
 -export([
     datetime_to_krbtime/1,
     system_time_to_krbtime/2,
@@ -38,10 +41,14 @@
     decode_ticket_flags/1,
     decode/2,
     encode/2,
-    decrypt/4
+    decrypt/3
     ]).
 
--include("KRB5.hrl").
+-export_type([
+    ticket/0
+    ]).
+
+-type ticket() :: #'Ticket'{}.
 
 -define(kdc_flags, [
     skip,forwardable,forwarded,proxiable,
@@ -130,14 +137,19 @@ post_decode(R = #'EncKDCRepPart'{flags = FlagsBin}) when is_binary(FlagsBin) ->
     post_decode(R#'EncKDCRepPart'{flags = Flags});
 post_decode(R = #'EncKDCRepPart'{key = EK}) ->
     R#'EncKDCRepPart'{key = post_decode(EK)};
-post_decode(K = #'EncryptionKey'{keytype = ETI}) when is_integer(ETI) ->
+post_decode(#'EncryptionKey'{keytype = ETI, keyvalue = KV}) when is_integer(ETI) ->
     ET = krb_crypto:etype_to_atom(ETI),
-    post_decode(K#'EncryptionKey'{keytype = ET});
+    #krb_base_key{etype = ET, key = KV};
 post_decode(S) -> S.
 
-decrypt(EType, Key, Usage, R0 = #'KDC-REP'{'enc-part' = EP}) ->
+-type encrypted_reply() :: #'KDC-REP'{'enc-part' :: #'EncryptedData'{}}.
+-type reply() :: #'KDC-REP'{'enc-part' :: #'EncKDCRepPart'{}}.
+
+-spec decrypt(krb_crypto:base_key(), krb_crypto:usage(), encrypted_reply()) -> {ok, reply()} | {error, term()}.
+decrypt(K, Usage, R0 = #'KDC-REP'{'enc-part' = EP}) ->
+    #krb_base_key{etype = EType} = K,
     #'EncryptedData'{etype = EType, cipher = CT} = EP,
-    case (catch krb_crypto:decrypt(EType, Key, CT, #{usage => Usage})) of
+    case (catch krb_crypto:decrypt(K, CT, #{usage => Usage})) of
         {'EXIT', Why} ->
             {error, Why};
         Plain ->
@@ -150,6 +162,7 @@ decrypt(EType, Key, Usage, R0 = #'KDC-REP'{'enc-part' = EP}) ->
             end
     end.
 
+-spec inner_decode_tgs_or_as(binary()) -> #'EncKDCRepPart'{}.
 inner_decode_tgs_or_as(Bin) ->
     case 'KRB5':decode('EncTGSRepPart', Bin) of
         {ok, EncPart, <<>>} ->
@@ -168,7 +181,7 @@ inner_decode_as(Bin) ->
             % microsoft's older krb5 implementations often chop off the front
             % of the EncASRepPart. what you get is just its innards starting
             % with an un-tagged EncryptionKey
-            {ok, K, B} = 'KRB5':decode('EncryptionKey', Bin),
+            {ok, #'EncryptionKey'{}, B} = 'KRB5':decode('EncryptionKey', Bin),
 
             % reconstruct the front part that's missing -- first, the context
             % #0 tag for EncryptionKey
@@ -180,8 +193,8 @@ inner_decode_as(Bin) ->
             Plain2 = <<0:1, 0:1, 1:1, 16:5,
                        (list_to_binary(LenBytes2))/binary, All/binary>>,
 
-            % don't bother reconstructing the application tag for EncASRepPart, just decode it here
-            % as a plain EncKDCRepPart
+            % don't bother reconstructing the application tag for EncASRepPart,
+            % just decode it here as a plain EncKDCRepPart
             {ok, EncPart, <<>>} = 'KRB5':decode('EncKDCRepPart', Plain2),
             post_decode(EncPart)
     end.

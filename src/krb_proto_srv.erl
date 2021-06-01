@@ -121,7 +121,7 @@ terminate(Why, State, #?MODULE{}) ->
 
 -spec get_n_prefs(integer(), term(), [pid()]) -> {[proto_fsm_ref()], [pid()], [pid()]}.
 get_n_prefs(0, _Call, Rem) -> {[], [], Rem};
-get_n_prefs(N, _Call, []) -> {[], [], []};
+get_n_prefs(_N, _Call, []) -> {[], [], []};
 get_n_prefs(N, Call, [Next | Rem]) ->
     case gen_statem:call(Next, Call) of
         {ok, PRef} ->

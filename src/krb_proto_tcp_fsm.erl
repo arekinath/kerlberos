@@ -127,7 +127,7 @@ incr_retry(S0 = #?MODULE{config = RConfig, retries = R0, timeout = T0,
 
 connect({call, _From}, _Msg, _S0 = #?MODULE{}) ->
     {keep_state_and_data, [postpone]};
-connect(enter, _PrevState, S0 = #?MODULE{retries = 0, host = H}) ->
+connect(enter, _PrevState, _S0 = #?MODULE{retries = 0, host = H}) ->
     lager:debug("[~p] out of tcp retries", [H]),
     {keep_state_and_data, [{state_timeout, 0, err}]};
 connect(enter, _PrevState, _S0 = #?MODULE{}) ->

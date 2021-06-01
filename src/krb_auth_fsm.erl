@@ -75,11 +75,13 @@ await(Pid) ->
 -record(?MODULE, {
     proto :: pid(),
     config :: config(),
-    key :: undefined | binary(),
+    key :: undefined | krb_crypto:base_key(),
     salt :: undefined | binary(),
     nonce :: undefined | integer(),
     etype :: undefined | krb_crypto:etype(),
-    result :: {error, term()} | {ok, term()},
+    result :: undefined |
+        {error, term()} |
+        {ok, krb_crypto:base_key(), krb_proto:ticket()},
     awaiters = [] :: [gen_statem:from()]
     }).
 
@@ -102,7 +104,7 @@ done(enter, _PrevState, S0 = #?MODULE{awaiters = Froms, result = Res}) ->
 done(state_timeout, die, S0 = #?MODULE{}) ->
     {stop, normal, S0}.
 
-terminate(normal, State, #?MODULE{}) ->
+terminate(normal, _State, #?MODULE{}) ->
     ok;
 terminate(Why, State, #?MODULE{}) ->
     lager:debug("terminating from ~p due to ~p", [State, Why]),
@@ -228,7 +230,7 @@ auth(state_timeout, req, S0 = #?MODULE{proto = P, config = C, salt = S,
     Key = krb_crypto:string_to_key(ET, Secret, S),
     EncData = #'EncryptedData'{
         etype = krb_crypto:atom_to_etype(ET),
-        cipher = krb_crypto:encrypt(ET, Key, PAEncPlain, #{usage => 1})
+        cipher = krb_crypto:encrypt(Key, PAEncPlain, #{usage => 1})
     },
     {ok, PAEnc} = 'KRB5':encode('PA-ENC-TIMESTAMP', EncData),
     PAData = [#'PA-DATA'{'padata-type' = 2, 'padata-value' = PAEnc}],
@@ -250,12 +252,11 @@ auth(state_timeout, req, S0 = #?MODULE{proto = P, config = C, salt = S,
             S2 = S1#?MODULE{result = {error, Why}},
             {next_state, done, S2}
     end;
-auth(krb, R0 = #'KDC-REP'{}, S0 = #?MODULE{nonce = Nonce, key = Key,
-                                           etype = ET}) ->
+auth(krb, R0 = #'KDC-REP'{}, S0 = #?MODULE{nonce = Nonce, key = Key}) ->
     NowKrb = krb_proto:system_time_to_krbtime(
         erlang:system_time(second), second),
 
-    {ok, R1} = krb_proto:decrypt(ET, Key, 3, R0),
+    {ok, R1} = krb_proto:decrypt(Key, 3, R0),
     #'KDC-REP'{'enc-part' = EP, ticket = T} = R1,
 
     Err = case EP of
@@ -279,7 +280,7 @@ auth(krb, R0 = #'KDC-REP'{}, S0 = #?MODULE{nonce = Nonce, key = Key,
             #'EncKDCRepPart'{key = KeyRec} = EP,
             S1 = S0#?MODULE{result = {ok, KeyRec, T}},
             {next_state, done, S1};
-        Other ->
+        _ ->
             S1 = S0#?MODULE{result = {error, {invalid_enc_part, Err}}},
             {next_state, done, S1}
     end;
