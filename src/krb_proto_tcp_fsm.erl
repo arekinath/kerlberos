@@ -171,7 +171,7 @@ idle(info, {tcp_closed, Sock}, S0 = #?MODULE{tsock = Sock}) ->
     S1 = S0#?MODULE{tsock = undefined},
     {next_state, connect, S1};
 idle({call, From}, {send, Type, Msg, Expect}, S0 = #?MODULE{}) ->
-    {ok, Bytes} = 'KRB5':encode(Type, Msg),
+    {ok, Bytes} = krb_proto:encode(Type, Msg),
     Ref = make_ref(),
     gen_statem:reply(From, {ok, Ref}),
     S1 = reset_retries(S0#?MODULE{expect = Expect, pkt = Bytes, sendref = Ref}),
@@ -274,7 +274,7 @@ ping(enter, _PrevState, S0 = #?MODULE{tsock = Sock, ping_timeout = T0,
         till = krb_proto:system_time_to_krbtime(
             erlang:system_time(second) + 4*3600, second),
         nonce = rand:uniform(1 bsl 30),
-        etype = [krb_crypto:atom_to_etype(X) || X <- [des_crc]]
+        etype = [des_crc]
     },
     Req = #'KDC-REQ'{
         pvno = 5,
@@ -282,7 +282,7 @@ ping(enter, _PrevState, S0 = #?MODULE{tsock = Sock, ping_timeout = T0,
         padata = [],
         'req-body' = ReqBody
     },
-    {ok, Bytes} = 'KRB5':encode('AS-REQ', Req),
+    {ok, Bytes} = krb_proto:encode('AS-REQ', Req),
     R = gen_tcp:send(Sock, <<Bytes/binary>>),
     case R of
         ok ->

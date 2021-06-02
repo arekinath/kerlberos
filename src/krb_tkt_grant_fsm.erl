@@ -25,7 +25,7 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %%
 
--module(krb_auth_fsm).
+-module(krb_tkt_grant_fsm).
 -behaviour(gen_statem).
 
 -include("KRB5.hrl").
@@ -44,8 +44,7 @@
     terminate/3,
     done/3,
     wait/3,
-    probe/3,
-    auth/3
+    tgsreq/3
     ]).
 
 -type result() :: {ok, krb_proto:ticket()} | {error, term()}.
@@ -67,20 +66,19 @@ await(Pid) ->
 
 -type config() :: #{
     realm => string(),
+    tgt => krb_proto:ticket(),
     principal => [string()],
     flags => [krb_proto:kdc_flag()],
     etypes => [krb_crypto:etype()],
     lifetime => secs(),
-    secret => binary()
+    request_pac => boolean()
     }.
 
 -record(?MODULE, {
     proto :: pid(),
     config :: config(),
-    key :: undefined | krb_crypto:base_key(),
-    salt :: undefined | binary(),
     nonce :: undefined | integer(),
-    etype :: undefined | krb_crypto:etype(),
+    key :: undefined | krb_crypto:base_key(),
     result :: undefined | result(),
     awaiters = [] :: [gen_statem:from()]
     }).
@@ -93,7 +91,7 @@ wait(enter, _PrevState, _S0 = #?MODULE{}) ->
     keep_state_and_data;
 wait({call, From}, await, S0 = #?MODULE{awaiters = Aws0}) ->
     S1 = S0#?MODULE{awaiters = [From | Aws0]},
-    {next_state, probe, S1}.
+    {next_state, tgsreq, S1}.
 
 done({call, From}, await, _S0 = #?MODULE{result = Res}) ->
     gen_statem:reply(From, Res),
@@ -112,166 +110,100 @@ terminate(Why, State, #?MODULE{}) ->
 
 callback_mode() -> [state_functions, state_enter].
 
-probe(enter, _PrevState, S0 = #?MODULE{}) ->
+tgsreq(enter, _PrevState, S0 = #?MODULE{}) ->
     {keep_state, S0, [{state_timeout, 0, req}]};
-probe(state_timeout, req, S0 = #?MODULE{proto = P, config = C}) ->
-    #{realm := Realm, principal := Principal} = C,
+tgsreq(state_timeout, req, S0 = #?MODULE{proto = P, config = C}) ->
+    #{realm := Realm, principal := Principal, tgt := TgtInfo} = C,
+    #{realm := TgtRealm, key := TgtKey, ticket := TgtTicket,
+      principal := TgtPrincipal} = TgtInfo,
     Options = sets:from_list(
         maps:get(flags, C, [renewable,proxiable,forwardable])),
     Lifetime = maps:get(lifetime, C, 4*3600),
     ETypes = maps:get(etypes, C, krb_crypto:default_etypes()),
-    Nonce = rand:uniform(1 bsl 30),
-    ReqBody = #'KDC-REQ-BODY'{
-        'kdc-options' = krb_proto:encode_kdc_flags(Options),
-        cname = #'PrincipalName'{
-            'name-type' = 1,
-            'name-string' = Principal},
-        sname = #'PrincipalName'{
-            'name-type' = 2,
-            'name-string' = ["krbtgt", Realm]},
-        realm = Realm,
-        till = krb_proto:system_time_to_krbtime(
-            erlang:system_time(second) + Lifetime, second),
-        nonce = Nonce,
-        etype = ETypes
-    },
-    Req = #'KDC-REQ'{
-        pvno = 5,
-        'msg-type' = 10,
-        padata = [],
-        'req-body' = ReqBody
-    },
-    {ok, Pid} = krb_req_fsm:start_link(
-        'AS-REQ', Req, ['AS-REP', 'KRB-ERROR'], P),
-    case krb_req_fsm:await(Pid) of
-        {ok, Msg} ->
-            probe(krb, Msg, S0);
-        {error, Msg = #'KRB-ERROR'{}} ->
-            probe(krb, Msg, S0);
-        {error, Why} ->
-            S1 = S0#?MODULE{result = {error, Why}},
-            {next_state, done, S1}
-    end;
-probe(krb, E = #'KRB-ERROR'{'error-code' = 'KDC_ERR_PREAUTH_REQUIRED'},
-                                                            S0 = #?MODULE{}) ->
-    #'KRB-ERROR'{'e-data' = EDs} = E,
-    EType2s = [D || #'PA-DATA'{'padata-type' = 19, 'padata-value' = D} <- EDs],
-    EType1s = [D || #'PA-DATA'{'padata-type' = 11, 'padata-value' = D} <- EDs],
-    {EType, Salt} = case {EType2s, EType1s} of
-        {[[#'ETYPE-INFO2-ENTRY'{etype = ET, salt = S} | _]], _} ->
-            {krb_crypto:etype_to_atom(ET), iolist_to_binary([S])};
-        {[], [[#'ETYPE-INFO-ENTRY'{etype = ET, salt = S} | _]]} ->
-            {krb_crypto:etype_to_atom(ET), iolist_to_binary([S])};
-        _ ->
-            #?MODULE{config = C} = S0,
-            #{realm := Realm, principal := Principal} = C,
-            {lists:last(maps:get(etypes, C, krb_crypto:default_etypes())),
-             iolist_to_binary([Realm, Principal])}
-    end,
-    S1 = S0#?MODULE{etype = EType, salt = Salt},
-    {next_state, auth, S1};
-
-probe(krb, #'KRB-ERROR'{'error-code' = 'KDC_ERR_ETYPE_NOSUPP'},
-                                                            S0 = #?MODULE{}) ->
-    S1 = S0#?MODULE{result = {error, no_matching_etypes}},
-    {next_state, done, S1};
-probe(krb, #'KRB-ERROR'{'error-code' = 'KDC_ERR_C_PRINCIPAL_UNKNOWN'},
-                                                            S0 = #?MODULE{}) ->
-    S1 = S0#?MODULE{result = {error, bad_principal}},
-    {next_state, done, S1};
-probe(krb, #'KRB-ERROR'{'error-code' = 'KDC_ERR_PRINCIPAL_NOT_UNIQUE'},
-                                                            S0 = #?MODULE{}) ->
-    S1 = S0#?MODULE{result = {error, bad_principal}},
-    {next_state, done, S1};
-probe(krb, #'KRB-ERROR'{'error-code' = 'KDC_ERR_POLICY'},
-                                                            S0 = #?MODULE{}) ->
-    S1 = S0#?MODULE{result = {error, bad_principal}},
-    {next_state, done, S1};
-probe(krb, #'KRB-ERROR'{'error-code' = 'KRB_ERR_GENERIC', 'e-text' = Txt},
-                                                            S0 = #?MODULE{}) ->
-    S1 = S0#?MODULE{result = {error, {krb5, generic, Txt}}},
-    {next_state, done, S1};
-probe(krb, #'KRB-ERROR'{'error-code' = Other},
-                                                            S0 = #?MODULE{}) ->
-    S1 = S0#?MODULE{result = {error, {krb5, Other}}},
-    {next_state, done, S1}.
-
-auth(enter, _PrevState, S0 = #?MODULE{}) ->
-    {keep_state, S0, [{state_timeout, 0, req}]};
-auth(state_timeout, req, S0 = #?MODULE{proto = P, config = C, salt = S,
-                                       etype = ET}) ->
-    #{realm := Realm, principal := Principal, secret := Secret} = C,
-
-    Options = sets:from_list(
-        maps:get(flags, C, [renewable,proxiable,forwardable])),
-    Lifetime = maps:get(lifetime, C, 4*3600),
     Nonce = rand:uniform(1 bsl 31),
+    RequestPAC = maps:get(request_pac, C, true),
 
     NowUSec = erlang:system_time(microsecond),
     NowMSec = NowUSec div 1000,
     USec = NowUSec rem 1000,
     NowKrb = krb_proto:system_time_to_krbtime(NowMSec, millisecond),
 
+    SvcKey = krb_crypto:random_to_key(krb_crypto:key_etype(TgtKey)),
+
     ReqBody = #'KDC-REQ-BODY'{
         'kdc-options' = krb_proto:encode_kdc_flags(Options),
-        cname = #'PrincipalName'{
-            'name-type' = 1,
-            'name-string' = Principal},
         sname = #'PrincipalName'{
             'name-type' = 2,
-            'name-string' = ["krbtgt", Realm]},
+            'name-string' = Principal},
         realm = Realm,
         till = krb_proto:system_time_to_krbtime(
             erlang:system_time(second) + Lifetime, second),
         nonce = Nonce,
-        etype = [krb_crypto:atom_to_etype(ET)]
+        etype = ETypes
     },
-    PAEncTs = #'PA-ENC-TS-ENC'{
-        patimestamp = NowKrb,
-        pausec = USec
+    CKey = krb_crypto:base_key_to_ck_key(TgtKey),
+    Cksum = krb_proto:checksum(CKey, 6, ReqBody),
+    Auth = #'Authenticator'{
+        'authenticator-vno' = 5,
+        crealm = TgtRealm,
+        cname = #'PrincipalName'{
+            'name-type' = 2,
+            'name-string' = TgtPrincipal},
+        ctime = NowKrb,
+        cusec = USec,
+        cksum = Cksum,
+        subkey = SvcKey
     },
-    {ok, PAEncPlain} = 'KRB5':encode('PA-ENC-TS-ENC', PAEncTs),
-    Key = krb_crypto:string_to_key(ET, Secret, S),
-    EncData = #'EncryptedData'{
-        etype = krb_crypto:atom_to_etype(ET),
-        cipher = krb_crypto:encrypt(Key, PAEncPlain, #{usage => 1})
+    APReq0 = #'AP-REQ'{
+        pvno = 5,
+        'msg-type' = 14,
+        ticket = TgtTicket,
+        authenticator = Auth,
+        'ap-options' = <<0:32>>
     },
-    {ok, PAEnc} = 'KRB5':encode('PA-ENC-TIMESTAMP', EncData),
-    PAData = [#'PA-DATA'{'padata-type' = 2, 'padata-value' = PAEnc}],
+    APReq1 = krb_proto:encrypt(TgtKey, 7, APReq0),
+    PAData0 = [
+        #'PA-DATA'{'padata-type' = 1, 'padata-value' = APReq1}
+    ],
+    PAData1 = case RequestPAC of
+        true ->
+            PacReq = #'PA-PAC-REQUEST'{'include-pac' = true},
+            PAData0 ++ [
+                #'PA-DATA'{'padata-type' = 128, 'padata-value' = PacReq}
+            ];
+        false -> PAData0
+    end,
     Req = #'KDC-REQ'{
         pvno = 5,
-        'msg-type' = 10,
-        padata = PAData,
+        'msg-type' = 12,
+        padata = PAData1,
         'req-body' = ReqBody
     },
-    S1 = S0#?MODULE{key = Key, nonce = Nonce},
+    S1 = S0#?MODULE{key = SvcKey, nonce = Nonce},
     {ok, Pid} = krb_req_fsm:start_link(
-        'AS-REQ', Req, ['AS-REP', 'KRB-ERROR'], P),
+        'TGS-REQ', Req, ['TGS-REP', 'KRB-ERROR'], P),
     case krb_req_fsm:await(Pid) of
         {ok, Msg} ->
-            auth(krb, Msg, S1);
+            tgsreq(krb, Msg, S1);
         {error, Msg = #'KRB-ERROR'{}} ->
-            auth(krb, Msg, S1);
+            tgsreq(krb, Msg, S1);
         {error, Why} ->
             S2 = S1#?MODULE{result = {error, Why}},
             {next_state, done, S2}
     end;
-auth(krb, R0 = #'KDC-REP'{}, S0 = #?MODULE{nonce = Nonce, key = Key}) ->
+
+tgsreq(krb, R0 = #'KDC-REP'{}, S0 = #?MODULE{nonce = Nonce, key = Key}) ->
     NowKrb = krb_proto:system_time_to_krbtime(
         erlang:system_time(second), second),
 
-    {ok, R1} = krb_proto:decrypt(Key, 3, R0),
+    {ok, R1} = krb_proto:decrypt(Key, 9, R0),
     #'KDC-REP'{'enc-part' = EP} = R1,
 
     Err = case EP of
-        #'EncKDCRepPart'{nonce = Nonce, endtime = End, flags = Flags} ->
+        #'EncKDCRepPart'{nonce = Nonce, endtime = End} ->
             EndBin = iolist_to_binary([End]),
             if
-                (EndBin > NowKrb) ->
-                    case [sets:is_element(X, Flags) || X <- [pre_auth,initial]] of
-                        [true, true] -> none;
-                        _ -> {bad_flags, sets:to_list(Flags)}
-                    end;
+                (EndBin > NowKrb) -> none;
                 true -> {bad_endtime, End}
             end;
         #'EncKDCRepPart'{nonce = BadNonce} ->
@@ -281,8 +213,8 @@ auth(krb, R0 = #'KDC-REP'{}, S0 = #?MODULE{nonce = Nonce, key = Key}) ->
     end,
     case Err of
         none ->
-            #?MODULE{config = #{principal := Principal}} = S0,
-            T = krb_proto:ticket_from_rep(Principal, R1),
+            #?MODULE{config = #{tgt := #{principal := TgtPrincipal}}} = S0,
+            T = krb_proto:ticket_from_rep(TgtPrincipal, R1),
             S1 = S0#?MODULE{result = {ok, T}},
             {next_state, done, S1};
         _ ->
@@ -290,35 +222,35 @@ auth(krb, R0 = #'KDC-REP'{}, S0 = #?MODULE{nonce = Nonce, key = Key}) ->
             {next_state, done, S1}
     end;
 
-auth(krb, #'KRB-ERROR'{'error-code' = 'KDC_ERR_PREAUTH_FAILED'},
+tgsreq(krb, #'KRB-ERROR'{'error-code' = 'KDC_ERR_PREAUTH_FAILED'},
                                                             S0 = #?MODULE{}) ->
     S1 = S0#?MODULE{result = {error, bad_secret}},
     {next_state, done, S1};
-auth(krb, #'KRB-ERROR'{'error-code' = 'KRB_AP_ERR_BAD_INTEGRITY'},
+tgsreq(krb, #'KRB-ERROR'{'error-code' = 'KRB_AP_ERR_BAD_INTEGRITY'},
                                                             S0 = #?MODULE{}) ->
     S1 = S0#?MODULE{result = {error, bad_secret}},
     {next_state, done, S1};
-auth(krb, #'KRB-ERROR'{'error-code' = 'KDC_ERR_ETYPE_NOSUPP'},
+tgsreq(krb, #'KRB-ERROR'{'error-code' = 'KDC_ERR_ETYPE_NOSUPP'},
                                                             S0 = #?MODULE{}) ->
     S1 = S0#?MODULE{result = {error, no_matching_etypes}},
     {next_state, done, S1};
-auth(krb, #'KRB-ERROR'{'error-code' = 'KDC_ERR_C_PRINCIPAL_UNKNOWN'},
+tgsreq(krb, #'KRB-ERROR'{'error-code' = 'KDC_ERR_C_PRINCIPAL_UNKNOWN'},
                                                             S0 = #?MODULE{}) ->
     S1 = S0#?MODULE{result = {error, bad_principal}},
     {next_state, done, S1};
-auth(krb, #'KRB-ERROR'{'error-code' = 'KDC_ERR_PRINCIPAL_NOT_UNIQUE'},
+tgsreq(krb, #'KRB-ERROR'{'error-code' = 'KDC_ERR_PRINCIPAL_NOT_UNIQUE'},
                                                             S0 = #?MODULE{}) ->
     S1 = S0#?MODULE{result = {error, bad_principal}},
     {next_state, done, S1};
-auth(krb, #'KRB-ERROR'{'error-code' = 'KDC_ERR_POLICY'},
+tgsreq(krb, #'KRB-ERROR'{'error-code' = 'KDC_ERR_POLICY'},
                                                             S0 = #?MODULE{}) ->
     S1 = S0#?MODULE{result = {error, bad_principal}},
     {next_state, done, S1};
-auth(krb, #'KRB-ERROR'{'error-code' = 'KRB_ERR_GENERIC', 'e-text' = Txt},
+tgsreq(krb, #'KRB-ERROR'{'error-code' = 'KRB_ERR_GENERIC', 'e-text' = Txt},
                                                             S0 = #?MODULE{}) ->
     S1 = S0#?MODULE{result = {error, {krb5, generic, Txt}}},
     {next_state, done, S1};
-auth(krb, #'KRB-ERROR'{'error-code' = Other},
+tgsreq(krb, #'KRB-ERROR'{'error-code' = Other},
                                                             S0 = #?MODULE{}) ->
     S1 = S0#?MODULE{result = {error, {krb5, Other}}},
     {next_state, done, S1}.

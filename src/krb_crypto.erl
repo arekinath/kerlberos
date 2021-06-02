@@ -39,7 +39,10 @@
     atom_to_ctype/1,
     ctype_to_atom/1,
     ctype_for_etype/1,
-    base_key_to_ck_key/1]).
+    base_key_to_ck_key/1,
+    key_etype/1,
+    key_ctype/1,
+    random_to_key/1]).
 
 -export([crc/1, crc/2, crc_unkey/3, hash_unkey/4]).
 
@@ -130,6 +133,12 @@ ctype_for_etype(des3_md5) -> md5;
 ctype_for_etype(aes128_hmac_sha1) -> hmac_sha1_aes128;
 ctype_for_etype(aes256_hmac_sha1) -> hmac_sha1_aes256;
 ctype_for_etype(E) -> error({no_ctype_for_etype, E}).
+
+-spec key_etype(base_key()) -> etype().
+key_etype(#krb_base_key{etype = ET}) -> ET.
+
+-spec key_ctype(ck_key()) -> ctype().
+key_ctype(#krb_ck_key{ctype = CT}) -> CT.
 
 -spec base_key_to_ck_key(base_key()) -> ck_key().
 base_key_to_ck_key(#krb_base_key{etype = EType, key = Key}) ->
@@ -581,6 +590,9 @@ string_to_key(rc4_hmac, String, _Salt) ->
     #krb_base_key{etype = rc4_hmac, key = ms_string_to_key(String)};
 string_to_key(E, _, _) -> error({unknown_etype, E}).
 
+-spec random_to_key(etype()) -> base_key().
+random_to_key(ET) ->
+	random_to_key(ET, crypto:strong_rand_bytes(32)).
 -spec random_to_key(etype(), binary()) -> base_key().
 random_to_key(des_crc, Data) ->
     #krb_base_key{etype = des_crc, key = des_random_to_key(Data, Data)};
@@ -599,9 +611,11 @@ random_to_key(aes256_hmac_sha1, Data) ->
     #krb_base_key{etype = aes256_hmac_sha1,
                   key = aes_random_to_key(aes_256_cbc, Data)};
 random_to_key(aes128_hmac_sha256, Data) ->
-    #krb_base_key{etype = aes128_hmac_sha256, key = Data};
+	<<Key:128/bitstring, _/binary>> = Data,
+    #krb_base_key{etype = aes128_hmac_sha256, key = Key};
 random_to_key(aes256_hmac_sha384, Data) ->
-    #krb_base_key{etype = aes256_hmac_sha384, key = Data};
+	<<Key:256/bitstring, _/binary>> = Data,
+    #krb_base_key{etype = aes256_hmac_sha384, key = Key};
 random_to_key(E, _) -> error({unknown_etype, E}).
 
 aes_kdf(Hash, Key, Label, K) ->

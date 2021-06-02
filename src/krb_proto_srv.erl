@@ -89,11 +89,11 @@ cancel_req(Pid, Ref) ->
 
 init([Config]) ->
     #{realm := Realm, kdc := Kdcs} = Config,
-    Timeout = maps:get(timeout, Config, 1000),
-    Retries = maps:get(retries, Config, 3),
-    MaxTimeout = 10000,
-    Delay = 1000,
-    MaxDelay = 5000,
+    Timeout = maps:get(timeout, Config, 500),
+    Retries = maps:get(retries, Config, 4),
+    MaxTimeout = 5000,
+    Delay = 500,
+    MaxDelay = 1000,
     Parallel = maps:get(parallel, Config, 3),
     RConfig = #{
         timeout => Timeout, max_timeout => MaxTimeout,
@@ -152,6 +152,8 @@ handle_call({req, Pid, Proto, N, Type, Msg, Expect}, From,
             Pid ! {krb_error, Ref},
             {noreply, S1};
         _ ->
+            lager:debug("sent req ~p to ~B KDCs via ~p",
+                [Ref, length(PRefs), Proto]),
             Req0 = #req{pid = Pid, protorefs = PRefs},
             RefMap1 = lists:foldl(fun (PRef, Acc) ->
                 Acc#{PRef => Ref}
@@ -170,6 +172,7 @@ handle_call({cancel, Ref}, _From, S0 = #?MODULE{reqs = Reqs0,
         maps:remove(PRef, Acc)
     end, RefMap0, PRefs),
     S1 = S0#?MODULE{reqs = Reqs1, refmap = RefMap1},
+    lager:debug("cancel req ~p", [Ref]),
     {reply, ok, S1}.
 
 handle_info({krb_reply, PRef, Msg}, S0 = #?MODULE{refmap = RefMap0,

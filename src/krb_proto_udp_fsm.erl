@@ -119,7 +119,7 @@ idle(info, {udp, Sock, IP, Port, Data}, _S0 = #?MODULE{usock = Sock}) ->
         [IP, Port, byte_size(Data)]),
     keep_state_and_data;
 idle({call, From}, {send, Type, Msg, Expect}, S0 = #?MODULE{}) ->
-    {ok, Bytes} = 'KRB5':encode(Type, Msg),
+    {ok, Bytes} = krb_proto:encode(Type, Msg),
     Ref = make_ref(),
     gen_statem:reply(From, {ok, Ref}),
     S1 = reset_retries(S0#?MODULE{expect = Expect, pkt = Bytes, sendref = Ref}),
@@ -191,7 +191,7 @@ err(state_timeout, entry, S0 = #?MODULE{realm = Realm, usock = Sock,
         till = krb_proto:system_time_to_krbtime(
             erlang:system_time(second) + 4*3600, second),
         nonce = rand:uniform(1 bsl 30),
-        etype = [krb_crypto:atom_to_etype(X) || X <- [des_crc]]
+        etype = [des_crc]
     },
     Req = #'KDC-REQ'{
         pvno = 5,
@@ -199,7 +199,7 @@ err(state_timeout, entry, S0 = #?MODULE{realm = Realm, usock = Sock,
         padata = [],
         'req-body' = ReqBody
     },
-    {ok, Bytes} = 'KRB5':encode('AS-REQ', Req),
+    {ok, Bytes} = krb_proto:encode('AS-REQ', Req),
     case gen_udp:send(Sock, H, P, Bytes) of
         ok ->
             {keep_state, S0, [{state_timeout, T0, limit}]};

@@ -32,6 +32,12 @@
 -include("krb_key_records.hrl").
 -include("KRB5.hrl").
 
+-export_type([
+    ticket/0,
+    kdc_flag/0,
+    ticket_flag/0
+    ]).
+
 -export([
     datetime_to_krbtime/1,
     system_time_to_krbtime/2,
@@ -41,14 +47,53 @@
     decode_ticket_flags/1,
     decode/2,
     encode/2,
-    decrypt/3
+    decrypt/3,
+    encrypt/3,
+    checksum/3,
+    ticket_from_rep/2
     ]).
 
--export_type([
-    ticket/0
-    ]).
+-type realm() :: string().
 
--type ticket() :: #'Ticket'{}.
+-type ticket() :: #{
+    flags => [ticket_flag()],
+    authtime => krbtime(),
+    starttime => krbtime(),
+    endtime => krbtime(),
+    renewuntil => krbtime(),
+    realm => realm(),
+    principal => [string()],
+    svc_principal => [string()],
+    key => krb_crypto:base_key(),
+    ticket => #'Ticket'{}}.
+
+-spec ticket_from_rep([string()], reply()) -> ticket().
+ticket_from_rep(Princ, #'KDC-REP'{ticket = T, 'enc-part' = EP = #'EncKDCRepPart'{}}) ->
+    #'EncKDCRepPart'{key = Key, flags = Flags, authtime = AuthTime,
+                     endtime = EndTime, srealm = Realm, sname = PrincName} = EP,
+    #'PrincipalName'{'name-type' = 2, 'name-string' = Principal} = PrincName,
+    T0 = #{
+        principal => Princ,
+        key => Key,
+        ticket => T,
+        flags => sets:to_list(Flags),
+        authtime => iolist_to_binary([AuthTime]),
+        endtime => iolist_to_binary([EndTime]),
+        realm => Realm,
+        svc_principal => Principal
+    },
+    T1 = case EP of
+        #'EncKDCRepPart'{starttime = asn1_NOVALUE} ->
+            T0;
+        #'EncKDCRepPart'{starttime = STime} ->
+            T0#{starttime => iolist_to_binary([STime])}
+    end,
+    _T2 = case EP of
+        #'EncKDCRepPart'{'renew-till' = asn1_NOVALUE} ->
+            T1;
+        #'EncKDCRepPart'{'renew-till' = RenewUntil} ->
+            T0#{renewuntil => iolist_to_binary([RenewUntil])}
+    end.
 
 -define(kdc_flags, [
     skip,forwardable,forwarded,proxiable,
@@ -74,8 +119,6 @@
 -type ticket_flag() :: forwardable | forwarded | proxiable | proxy |
     allow_postdate | postdated | invalid | renewable | initial | pre_auth |
     hw_auth | transited | delegate | anonymous.
-
--export_type([kdc_flag/0, ticket_flag/0]).
 
 -spec encode_kdc_flags(sets:set(kdc_flag())) -> bitstring().
 encode_kdc_flags(FlagSet) ->
@@ -162,6 +205,29 @@ decrypt(K, Usage, R0 = #'KDC-REP'{'enc-part' = EP}) ->
             end
     end.
 
+-type request() :: #'AP-REQ'{authenticator :: #'Authenticator'{}}.
+-type encrypted_request() :: #'AP-REQ'{authenticator :: #'EncryptedData'{}}.
+
+-spec encrypt(krb_crypto:base_key(), krb_crypto:usage(), request()) -> encrypted_request().
+encrypt(K, Usage, R0 = #'AP-REQ'{authenticator = A}) ->
+    #krb_base_key{etype = EType} = K,
+    {ok, Plaintext} = encode('Authenticator', A),
+    Ciphertext = krb_crypto:encrypt(K, Plaintext, #{usage => Usage}),
+    ED = #'EncryptedData'{
+        etype = krb_crypto:atom_to_etype(EType),
+        cipher = Ciphertext
+    },
+    R0#'AP-REQ'{authenticator = ED}.
+
+-spec checksum(krb_crypto:ck_key(), krb_crypto:usage(), term()) -> #'Checksum'{}.
+checksum(CK, Usage, B = #'KDC-REQ-BODY'{}) ->
+    #krb_ck_key{ctype = CType} = CK,
+    {ok, Bin} = encode('KDC-REQ-BODY', B),
+    #'Checksum'{
+        cksumtype = krb_crypto:atom_to_ctype(CType),
+        checksum = krb_crypto:checksum(CK, Bin, #{usage => Usage})
+    }.
+
 -spec inner_decode_tgs_or_as(binary()) -> #'EncKDCRepPart'{}.
 inner_decode_tgs_or_as(Bin) ->
     case 'KRB5':decode('EncTGSRepPart', Bin) of
@@ -219,8 +285,36 @@ minimum_octets(Val, Acc) ->
 minimum_octets(Val) ->
     minimum_octets(Val, []).
 
+pre_encode(PA = #'PA-DATA'{'padata-type' = 1, 'padata-value' = V0 = #'AP-REQ'{}}) ->
+    {ok, D} = encode('AP-REQ', V0),
+    PA#'PA-DATA'{'padata-value' = D};
+pre_encode(PA = #'PA-DATA'{'padata-type' = 128, 'padata-value' = V0 = #'PA-PAC-REQUEST'{}}) ->
+    {ok, D} = encode('PA-PAC-REQUEST', V0),
+    PA#'PA-DATA'{'padata-value' = D};
+pre_encode(R = #'KDC-REQ-BODY'{etype = ETs}) ->
+    ETIs = lists:map(fun
+        (I) when is_integer(I) -> I;
+        (A) when is_atom(A) -> krb_crypto:atom_to_etype(A)
+    end, ETs),
+    R#'KDC-REQ-BODY'{etype = ETIs};
+pre_encode(R = #'KDC-REQ'{padata = PAs, 'req-body' = Body}) ->
+    R#'KDC-REQ'{padata = [pre_encode(PA) || PA <- PAs],
+                'req-body' = pre_encode(Body)};
+pre_encode(A = #'Authenticator'{subkey = K0 = #krb_base_key{}}) ->
+    pre_encode(A#'Authenticator'{subkey = pre_encode(K0)});
+pre_encode(A = #'Authenticator'{cksum = C = #'Checksum'{cksumtype = CK}}) when is_atom(CK) ->
+    pre_encode(A#'Authenticator'{cksum = pre_encode(C)});
+pre_encode(C = #'Checksum'{cksumtype = CK}) when is_atom(CK) ->
+    CKI = krb_crypto:atom_to_ctype(CK),
+    pre_encode(C#'Checksum'{cksumtype = CKI});
+pre_encode(#krb_base_key{etype = ET, key = K}) ->
+    #'EncryptionKey'{
+        keytype = krb_crypto:atom_to_etype(ET),
+        keyvalue = K};
+pre_encode(X) -> X.
+
 encode(Type, Data) ->
-    'KRB5':encode(Type, Data).
+    'KRB5':encode(Type, pre_encode(Data)).
 
 -type krbtime() :: binary().
 
