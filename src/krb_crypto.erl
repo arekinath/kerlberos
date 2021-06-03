@@ -55,7 +55,7 @@
 
 -type etype() :: des_crc | des_md4 | des_md5 | des3_md5 | des3_sha1 |
 	aes128_hmac_sha1 | aes256_hmac_sha1 | rc4_hmac | rc4_hmac_exp |
-	des3_sha1_nokd | aes128_hmac_sha256 | aes256_hmac_sha384.
+	des3_sha1_nokd | aes128_hmac_sha256 | aes256_hmac_sha384 | des_sha1.
 -type ctype() :: hmac_sha1_aes128 | hmac_sha1_aes256 | hmac_sha256_aes128 |
 	hmac_sha384_aes256 | hmac_sha1_des3_kd | crc32 | md4 | md5.
 
@@ -70,7 +70,7 @@
 default_etypes() ->
     [aes256_hmac_sha384, aes128_hmac_sha256,
      aes256_hmac_sha1, aes128_hmac_sha1,
-     des3_sha1, des3_md5,
+     des3_sha1, des3_md5, des_sha1,
      des_md5, des_crc,
      rc4_hmac_exp, rc4_hmac].
 
@@ -80,6 +80,7 @@ etype_to_atom(2) -> des_md4;
 etype_to_atom(3) -> des_md5;
 etype_to_atom(5) -> des3_md5;
 etype_to_atom(7) -> des3_sha1_nokd; % deprecated version
+etype_to_atom(8) -> des_sha1;
 etype_to_atom(16) -> des3_sha1;
 etype_to_atom(17) -> aes128_hmac_sha1;              % rfc3962
 etype_to_atom(18) -> aes256_hmac_sha1;              % rfc3962
@@ -87,12 +88,13 @@ etype_to_atom(19) -> aes128_hmac_sha256;            % rfc8009
 etype_to_atom(20) -> aes256_hmac_sha384;            % rfc8009
 etype_to_atom(23) -> rc4_hmac;
 etype_to_atom(24) -> rc4_hmac_exp;
-etype_to_atom(_) -> error(unknown_etype).
+etype_to_atom(N) -> error({unknown_etype, N}).
 
 -spec atom_to_etype(etype()) -> integer().
 atom_to_etype(des_crc) -> 1;
 atom_to_etype(des_md4) -> 2;
 atom_to_etype(des_md5) -> 3;
+atom_to_etype(des_sha1) -> 8;
 atom_to_etype(des3_md5) -> 5;
 atom_to_etype(des3_sha1_nokd) -> 7; % deprecated
 atom_to_etype(des3_sha1) -> 16;
@@ -102,7 +104,7 @@ atom_to_etype(aes128_hmac_sha256) -> 19;
 atom_to_etype(aes256_hmac_sha384) -> 20;
 atom_to_etype(rc4_hmac) -> 23;
 atom_to_etype(rc4_hmac_exp) -> 24;
-atom_to_etype(_) -> error(unknown_etype).
+atom_to_etype(A) -> error({unknown_etype, A}).
 
 -spec ctype_to_atom(integer()) -> ctype().
 ctype_to_atom(1) -> crc32;
@@ -113,7 +115,7 @@ ctype_to_atom(15) -> hmac_sha1_aes128;
 ctype_to_atom(16) -> hmac_sha1_aes256;
 ctype_to_atom(19) -> hmac_sha256_aes128;
 ctype_to_atom(20) -> hmac_sha384_aes256;
-ctype_to_atom(_) -> error(unknown_ctype).
+ctype_to_atom(N) -> error({unknown_ctype, N}).
 
 -spec atom_to_ctype(ctype()) -> integer().
 atom_to_ctype(crc) -> 1;
@@ -124,7 +126,7 @@ atom_to_ctype(hmac_sha1_aes128) -> 15;
 atom_to_ctype(hmac_sha1_aes256) -> 16;
 atom_to_ctype(hmac_sha256_aes128) -> 19;
 atom_to_ctype(hmac_sha384_aes256) -> 20;
-atom_to_ctype(_) -> error(unknown_ctype).
+atom_to_ctype(A) -> error({unknown_ctype, A}).
 
 -spec ctype_for_etype(etype()) -> ctype().
 ctype_for_etype(des_crc) -> crc;
@@ -228,6 +230,20 @@ one_time(des_md5, Key, Data, Opts) ->
         encfun = {crypto, crypto_one_time, [des_cbc]},
         macfun = {?MODULE, hash_unkey, [md5]},
         maclen = 16, blocklen = 8, padding = true
+    },
+    Triad = {Key, Key, Key},
+    IV = <<0:64>>,
+    case Opts of
+        #{encrypt := true} ->
+            mac_then_encrypt(Triad, IV, Data, Spec);
+        #{encrypt := false} ->
+            de_mac_then_encrypt(Triad, IV, Data, Spec)
+    end;
+one_time(des_sha1, Key, Data, Opts) ->
+    Spec = #cryptspec{
+        encfun = {crypto, crypto_one_time, [des_cbc]},
+        macfun = {?MODULE, hash_unkey, [sha]},
+        maclen = 20, blocklen = 8, padding = true
     },
     Triad = {Key, Key, Key},
     IV = <<0:64>>,
@@ -810,13 +826,15 @@ rfc3961_nfold_7_test() ->
 rfc3961_string_to_key_1_test() ->
     Password = <<"password">>,
     Salt = <<"ATHENA.MIT.EDUraeburn">>,
-    Key = base64:decode(<<"y8IvriNSmOM=">>),
+    Key = #krb_base_key{etype = des_crc,
+                        key = base64:decode(<<"y8IvriNSmOM=">>)},
     ?assertMatch(Key, string_to_key(des_crc, Password, Salt)).
 
 rfc3961_string_to_key_2_test() ->
     Password = <<"potatoe">>,
     Salt = <<"WHITEHOUSE.GOVdanny">>,
-    Key = base64:decode(<<"3z0yp0/ZKgE=">>),
+    Key = #krb_base_key{etype = des_crc,
+                        key = base64:decode(<<"3z0yp0/ZKgE=">>)},
     ?assertMatch(Key, string_to_key(des_crc, Password, Salt)).
 
 rfc3961_kd_1_test() ->
@@ -834,13 +852,15 @@ rfc3961_kd_1_test() ->
 rfc3961_des3_stk_1_test() ->
     Salt = <<"ATHENA.MIT.EDUraeburn">>,
     String = <<"password">>,
-    Key = base64:decode(<<"hQu1E1hUjNBehnaMMT47/vdRGTfc9yw+">>),
+    Key = #krb_base_key{etype = des3_md5,
+                        key = base64:decode(<<"hQu1E1hUjNBehnaMMT47/vdRGTfc9yw+">>)},
     ?assertMatch(Key, string_to_key(des3_md5, String, Salt)).
 
 rfc3961_des3_stk_2_test() ->
     Salt = <<"WHITEHOUSE.GOVdanny">>,
     String = <<"potatoe">>,
-    Key = base64:decode(<<"380jPdCkMgTqbcQ3+xXgYbApecH3Tzd6">>),
+    Key = #krb_base_key{etype = des3_md5,
+                        key = base64:decode(<<"380jPdCkMgTqbcQ3+xXgYbApecH3Tzd6">>)},
     ?assertMatch(Key, string_to_key(des3_md5, String, Salt)).
 
 rfc3961_crc_test() ->
@@ -879,53 +899,57 @@ rfc8009_stk_2_test() ->
 
 rfc8009_sample_decrypt_5b_test() ->
     Output = base64:decode(<<"hNfzB1TtmHurC/NQa+sJz7VUAs735od86Z4kflLRbtRCHf34l2w=">>),
-    BaseKey = base64:decode(<<"NwXZYIDBdyig6ADqtuDSPA==">>),
-    Input = decrypt(aes128_hmac_sha256, BaseKey, Output, #{usage => 2}),
+    BaseKey = #krb_base_key{etype = aes128_hmac_sha256,
+                            key = base64:decode(<<"NwXZYIDBdyig6ADqtuDSPA==">>)},
+    Input = decrypt(BaseKey, Output, #{usage => 2}),
     ?assertMatch(<<0,1,2,3,4,5>>, Input).
 
 rfc8009_sample_decrypt_256_test() ->
     Output = base64:decode(<<"QAE+LfWOh1GVfSh4vNLW/hAcz9VWyx6ueds8PuhkKfKypgKshv727LZH1ilfrgd6H+tRdQjSwWtBkuAfYg==">>),
-    BaseKey = base64:decode(<<"bUBNN/r3n53w0zVo0yBmmADrSDZHLqigJtFrcYJGDFI=">>),
+    Key = #krb_base_key{
+        etype = aes256_hmac_sha384,
+        key = base64:decode(<<"bUBNN/r3n53w0zVo0yBmmADrSDZHLqigJtFrcYJGDFI=">>)
+    },
     Input = base64:decode(<<"AAECAwQFBgcICQoLDA0ODxAREhMU">>),
-    ?assertMatch(Input, decrypt(aes256_hmac_sha384, BaseKey, Output, #{usage => 2})).
+    ?assertMatch(Input, decrypt(Key, Output, #{usage => 2})).
 
 pcap_1_test() ->
     Output = base64:decode(<<"Les525C4ZmMX+IsZRTf0ULeqLMbn6tEOZQdxcSfqH2DKIt4ngmsy55C1zDXhCYEYXlvBKMQKyWVgA8n/">>),
     BaseKey = string_to_key(des3_sha1, <<"root">>, <<"EXAMPLE.COMrootadmin">>),
-    Decrypted = decrypt(des3_sha1, BaseKey, Output, #{usage => 1}),
+    Decrypted = decrypt(BaseKey, Output, #{usage => 1}),
     Actual = base64:decode(<<"MBqgERgPMjAyMTA1MTcwNTIxMjZaoQUCAwSCcgAAAAA=">>),
     ?assertMatch(Actual, Decrypted).
 
 loopback_test() ->
     Input = <<"foobar">>,
     BaseKey = string_to_key(des3_sha1, <<"foo">>, <<"EXAMPLE.COMfoo">>),
-    Encrypted = encrypt(des3_sha1, BaseKey, Input, #{usage => 1}),
-    Decrypted = decrypt(des3_sha1, BaseKey, Encrypted, #{usage => 1}),
+    Encrypted = encrypt(BaseKey, Input, #{usage => 1}),
+    Decrypted = decrypt(BaseKey, Encrypted, #{usage => 1}),
     ?assertMatch(<<Input:(byte_size(Input))/binary, _/binary>>, Decrypted).
 
 loopback_2_test() ->
     Input = <<"foobar">>,
     BaseKey = string_to_key(aes128_hmac_sha256, <<"foo">>, <<"EXAMPLE.COMfoo">>),
-    Encrypted = encrypt(aes128_hmac_sha256, BaseKey, Input, #{usage => 1}),
-    Decrypted = decrypt(aes128_hmac_sha256, BaseKey, Encrypted, #{usage => 1}),
+    Encrypted = encrypt(BaseKey, Input, #{usage => 1}),
+    Decrypted = decrypt(BaseKey, Encrypted, #{usage => 1}),
     ?assertMatch(Input, Decrypted).
 
 pcap_2_test() ->
     Output = base64:decode(<<"K40hf8zUDGP+I/8kW6JRW9qve26CFr+86jdfL912V+n3A0eviW49tCYirQFHdP2odOn5uqy+zw==">>),
     BaseKey = string_to_key(aes256_hmac_sha1, <<"root">>, <<"EXAMPLE.COMroot">>),
     Input = base64:decode(<<"MBmgERgPMjAyMTA1MTgwMzU2MDZaoQQCAgMh">>),
-    ?assertMatch(Input, decrypt(aes256_hmac_sha1, BaseKey, Output, #{usage => 1})).
+    ?assertMatch(Input, decrypt(BaseKey, Output, #{usage => 1})).
 
 pcap_3_test() ->
     Output = base64:decode(<<"zywlQYED3qgionoqmuNPa3VPJp9a2347o5NDGAyD+Qq14JglvsyJOw==">>),
     BaseKey = string_to_key(des_crc, <<"root">>, <<"EXAMPLE.COMroot">>),
     Input = base64:decode(<<"MBmgERgPMjAyMTA1MTgwNDAwMzVaoQQCAgEqAA==">>),
-    ?assertMatch(Input, decrypt(des_crc, BaseKey, Output, #{usage => 1})).
+    ?assertMatch(Input, decrypt(BaseKey, Output, #{usage => 1})).
 
 pcap_4_test() ->
     Output = base64:decode(<<"VB8utLYRqScFZiSEO/8nwACAcBMCPKLaChTgmOr8hGRoftvqiKI7MxFs/nz74FsjTQmydgr4OsNsfJ9i">>),
     BaseKey = string_to_key(aes128_hmac_sha256, <<"root">>, <<"EXAMPLE.COMroot">>),
     Input = base64:decode(<<"MBqgERgPMjAyMTA1MTgwNDE2NTNaoQUCAwr2Cg==">>),
-    ?assertMatch(Input, decrypt(aes128_hmac_sha256, BaseKey, Output, #{usage => 1})).
+    ?assertMatch(Input, decrypt(BaseKey, Output, #{usage => 1})).
 
 -endif.
