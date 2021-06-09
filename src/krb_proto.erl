@@ -35,7 +35,8 @@
 -export_type([
     ticket/0,
     kdc_flag/0,
-    ticket_flag/0
+    ticket_flag/0,
+    keyset/0
     ]).
 
 -export([
@@ -50,8 +51,31 @@
     decrypt/3,
     encrypt/3,
     checksum/3,
-    ticket_from_rep/2
+    ticket_from_rep/2,
+    make_generic_error/3,
+    make_error/3
     ]).
+
+make_generic_error(Realm, Service, Why) ->
+    E0 = make_error(Realm, Service, 'KRB_ERR_GENERIC'),
+    E0#'KRB-ERROR'{
+        'e-text' = iolist_to_binary([io_lib:format("~9999p", [Why])])
+    }.
+
+make_error(Realm, Service, Code) ->
+    NowUSec = erlang:system_time(microsecond),
+    NowMSec = NowUSec div 1000,
+    USec = NowUSec rem 1000,
+    NowKrb = krb_proto:system_time_to_krbtime(NowMSec, millisecond),
+    #'KRB-ERROR'{
+        pvno = 5,
+        'msg-type' = 30,
+        stime = NowKrb,
+        susec = USec,
+        realm = Realm,
+        sname = #'PrincipalName'{'name-type' = 2, 'name-string' = Service},
+        'error-code' = Code
+    }.
 
 -type realm() :: string().
 
@@ -112,6 +136,9 @@ ticket_from_rep(Princ, #'KDC-REP'{ticket = T, 'enc-part' = EP = #'EncKDCRepPart'
     anonymous,skip,skip,skip,
     {skip,12}]).
 
+-define(ap_flags, [
+    {skip, 29}, mutual, use_session_key, skip]).
+
 -type kdc_flag() :: forwardable | forwarded | proxiable | proxy |
     allow_postdate | postdated | renewable | pk_cross | hw_auth |
     canonicalize | disable_transited | renewable_ok | enc_tkt_in_skey |
@@ -149,6 +176,16 @@ decode(Data, [NextType | Rest]) ->
             decode(Data, Rest)
     end.
 
+post_decode(T = #'Ticket'{'enc-part' = EP}) ->
+    T#'Ticket'{'enc-part' = post_decode(EP)};
+post_decode(T = #'EncTicketPart'{flags = F0, key = K0}) when is_bitstring(F0) ->
+    F1 = decode_bit_flags(F0, ?ticket_flags),
+    K1 = post_decode(K0),
+    T#'EncTicketPart'{flags = F1, key = K1};
+post_decode(APR = #'AP-REQ'{'ap-options' = B, ticket = T, authenticator = A}) when is_bitstring(B) ->
+    Opts = decode_bit_flags(B, ?ap_flags),
+    post_decode(APR#'AP-REQ'{'ap-options' = Opts, ticket = post_decode(T),
+        authenticator = post_decode(A)});
 post_decode(Pa = #'PA-DATA'{'padata-type' = 11, 'padata-value' = V0}) ->
     case 'KRB5':decode('ETYPE-INFO', V0) of
         {ok, V1, <<>>} -> Pa#'PA-DATA'{'padata-value' = V1};
@@ -170,11 +207,15 @@ post_decode(E = #'KRB-ERROR'{'e-data' = D0}) when is_binary(D0) ->
         _ ->
             E
     end;
-post_decode(R = #'KDC-REP'{'enc-part' = EP}) ->
-    R#'KDC-REP'{'enc-part' = post_decode(EP)};
+post_decode(R = #'KDC-REP'{'enc-part' = EP, ticket = T}) ->
+    R#'KDC-REP'{'enc-part' = post_decode(EP), ticket = post_decode(T)};
+post_decode(R = #'AP-REP'{'enc-part' = EP}) ->
+    R#'AP-REP'{'enc-part' = post_decode(EP)};
 post_decode(EP = #'EncryptedData'{etype = ETI}) when is_integer(ETI) ->
     ET = krb_crypto:etype_to_atom(ETI),
     post_decode(EP#'EncryptedData'{etype = ET});
+post_decode(R = #'EncAPRepPart'{subkey = EK}) ->
+    R#'EncAPRepPart'{subkey = post_decode(EK)};
 post_decode(R = #'EncKDCRepPart'{flags = FlagsBin}) when is_binary(FlagsBin) ->
     Flags = decode_bit_flags(FlagsBin, ?ticket_flags),
     post_decode(R#'EncKDCRepPart'{flags = Flags});
@@ -188,21 +229,86 @@ post_decode(S) -> S.
 -type encrypted_reply() :: #'KDC-REP'{'enc-part' :: #'EncryptedData'{}}.
 -type reply() :: #'KDC-REP'{'enc-part' :: #'EncKDCRepPart'{}}.
 
--spec decrypt(krb_crypto:base_key(), krb_crypto:usage(), encrypted_reply()) -> {ok, reply()} | {error, term()}.
-decrypt(K, Usage, R0 = #'KDC-REP'{'enc-part' = EP}) ->
-    #krb_base_key{etype = EType} = K,
-    #'EncryptedData'{etype = EType, cipher = CT} = EP,
-    case (catch krb_crypto:decrypt(K, CT, #{usage => Usage})) of
-        {'EXIT', Why} ->
-            {error, Why};
-        Plain ->
+find_key(ET, [#{key := K = #krb_base_key{etype = ET}} | _]) -> K;
+find_key(ET, [K = #krb_base_key{etype = ET} | _]) -> K;
+find_key(ET, K = #krb_base_key{etype = ET}) -> K;
+find_key(ET, [_ | Rest]) -> find_key(ET, Rest);
+find_key(ET, Ks) -> no_key_found.
+
+-type keyset() ::
+    krb_crypto:base_key() |
+    [krb_crypto:base_key()] |
+    [mit_keytab:keytab_entry()].
+
+-spec decrypt(keyset(), krb_crypto:usage(), encrypted_reply()) -> {ok, reply()} | {error, term()}.
+decrypt(Ks, Usage, EP = #'EncryptedData'{etype = EType, cipher = CT}) ->
+    case find_key(EType, Ks) of
+        no_key_found ->
+            {error, {no_key_found, EType}};
+        K ->
+            case (catch krb_crypto:decrypt(K, CT, #{usage => Usage})) of
+                {'EXIT', Why} ->
+                    {error, Why};
+                Plain ->
+                    {ok, Plain}
+            end
+    end;
+decrypt(Ks, Usage, R0 = #'KDC-REP'{'enc-part' = EP}) ->
+    case decrypt(Ks, Usage, EP) of
+        {ok, Plain} ->
             case (catch inner_decode_tgs_or_as(Plain)) of
                 {'EXIT', Why} ->
                     {error, {inner_decode, Why}};
                 Inner ->
                     R1 = R0#'KDC-REP'{'enc-part' = Inner},
                     {ok, R1}
-            end
+            end;
+        Err -> Err
+    end;
+decrypt(Ks, Usage, R0 = #'AP-REP'{'enc-part' = EP}) ->
+    case decrypt(Ks, Usage, EP) of
+        {ok, Plain} ->
+            case (catch inner_decode('EncAPRepPart', Plain)) of
+                {'EXIT', Why} ->
+                    {error, {inner_decode, Why}};
+                Inner ->
+                    R1 = R0#'AP-REP'{'enc-part' = Inner},
+                    {ok, R1}
+            end;
+        Err -> Err
+    end;
+decrypt(Ks, Usage, R0 = #'AP-REQ'{'authenticator' = EP}) ->
+    case decrypt(Ks, Usage, EP) of
+        {ok, Plain} ->
+            case (catch inner_decode('Authenticator', Plain)) of
+                {'EXIT', Why} ->
+                    {error, {inner_decode, Why}};
+                Inner ->
+                    R1 = R0#'AP-REQ'{'authenticator' = Inner},
+                    {ok, R1}
+            end;
+        Err -> Err
+    end;
+decrypt(Ks, Usage, R0 = #'Ticket'{'enc-part' = EP}) ->
+    case decrypt(Ks, Usage, EP) of
+        {ok, Plain} ->
+            case (catch inner_decode('EncTicketPart', Plain)) of
+                {'EXIT', Why} ->
+                    {error, {inner_decode, Why}};
+                Inner ->
+                    R1 = R0#'Ticket'{'enc-part' = Inner},
+                    {ok, R1}
+            end;
+        Err -> Err
+    end.
+
+inner_decode(Type, Bin) ->
+    case 'KRB5':decode(Type, Bin) of
+        {ok, EncPart, Rem} when byte_size(Rem) < 8 ->
+            <<0:(bit_size(Rem))>> = Rem,
+            post_decode(EncPart);
+        _ ->
+            error({bad_inner_data, Type})
     end.
 
 -type request() :: #'AP-REQ'{authenticator :: #'Authenticator'{}}.
@@ -217,7 +323,16 @@ encrypt(K, Usage, R0 = #'AP-REQ'{authenticator = A}) ->
         etype = krb_crypto:atom_to_etype(EType),
         cipher = Ciphertext
     },
-    R0#'AP-REQ'{authenticator = ED}.
+    R0#'AP-REQ'{authenticator = ED};
+encrypt(K, Usage, R0 = #'AP-REP'{'enc-part' = #'EncAPRepPart'{} = EP}) ->
+    #krb_base_key{etype = EType} = K,
+    {ok, Plaintext} = encode('EncAPRepPart', EP),
+    Ciphertext = krb_crypto:encrypt(K, Plaintext, #{usage => Usage}),
+    ED = #'EncryptedData'{
+        etype = krb_crypto:atom_to_etype(EType),
+        cipher = Ciphertext
+    },
+    R0#'AP-REP'{'enc-part' = ED}.
 
 -spec checksum(krb_crypto:ck_key(), krb_crypto:usage(), term()) -> #'Checksum'{}.
 checksum(CK, Usage, B = #'KDC-REQ-BODY'{}) ->
@@ -226,12 +341,19 @@ checksum(CK, Usage, B = #'KDC-REQ-BODY'{}) ->
     #'Checksum'{
         cksumtype = krb_crypto:atom_to_ctype(CType),
         checksum = krb_crypto:checksum(CK, Bin, #{usage => Usage})
+    };
+checksum(CK, Usage, Bin) when is_binary(Bin) ->
+    #krb_ck_key{ctype = CType} = CK,
+    #'Checksum'{
+        cksumtype = krb_crypto:atom_to_ctype(CType),
+        checksum = krb_crypto:checksum(CK, Bin, #{usage => Usage})
     }.
 
 -spec inner_decode_tgs_or_as(binary()) -> #'EncKDCRepPart'{}.
 inner_decode_tgs_or_as(Bin) ->
     case 'KRB5':decode('EncTGSRepPart', Bin) of
-        {ok, EncPart, <<>>} ->
+        {ok, EncPart, Rem} when byte_size(Rem) < 8 ->
+            <<0:(bit_size(Rem))>> = Rem,
             post_decode(EncPart);
         _ ->
             inner_decode_as(Bin)
@@ -239,7 +361,8 @@ inner_decode_tgs_or_as(Bin) ->
 
 inner_decode_as(Bin) ->
     case 'KRB5':decode('EncASRepPart', Bin) of
-        {ok, EncPart, <<>>} ->
+        {ok, EncPart, Rem} when byte_size(Rem) < 8 ->
+            <<0:(bit_size(Rem))>> = Rem,
             post_decode(EncPart);
 
         _ ->
@@ -251,13 +374,12 @@ inner_decode_as(Bin) ->
 
             % reconstruct the front part that's missing -- first, the context
             % #0 tag for EncryptionKey
-            {LenBytes, _} = asn1_encode_length(byte_size(Bin) - byte_size(B)),
-            All = <<1:1, 0:1, 1:1, 0:5, (list_to_binary(LenBytes))/binary,
-                    Bin/binary>>,
+            LenBytes = asn1_encode_length(byte_size(Bin) - byte_size(B)),
+            All = <<1:1, 0:1, 1:1, 0:5, LenBytes/binary, Bin/binary>>,
             % then the sequence tag to go on the very front
-            {LenBytes2, _} = asn1_encode_length(byte_size(All)),
+            LenBytes2 = asn1_encode_length(byte_size(All)),
             Plain2 = <<0:1, 0:1, 1:1, 16:5,
-                       (list_to_binary(LenBytes2))/binary, All/binary>>,
+                       LenBytes2/binary, All/binary>>,
 
             % don't bother reconstructing the application tag for EncASRepPart,
             % just decode it here as a plain EncKDCRepPart
@@ -266,25 +388,30 @@ inner_decode_as(Bin) ->
     end.
 
 asn1_encode_length(L) when L =< 127 ->
-    {[L],1};
+    <<L>>;
 asn1_encode_length(L) ->
-    Oct = minimum_octets(L),
-    Len = length(Oct),
-    if
-        Len =< 126 ->
-            {[128 bor Len|Oct],Len + 1};
-        true ->
-            exit({error,{asn1,too_long_length_oct,Len}})
-    end.
+    Bytes = binary:encode_unsigned(L),
+    <<1:1, (byte_size(Bytes)):7, Bytes/binary>>.
 
-minimum_octets(0, Acc) ->
-    Acc;
-minimum_octets(Val, Acc) ->
-    minimum_octets(Val bsr 8, [Val band 255|Acc]).
+asn1_decode_length(<<0:1, Len:7, Data:Len/binary, Rest/binary>>) ->
+    {Len, Data, Rest};
+asn1_decode_length(<<1:1, LenBytes:7, Len:LenBytes/big-unit:8,
+                     Data:Len/binary, Rest/binary>>) ->
+    {Len, Data, Rest}.
 
-minimum_octets(Val) ->
-    minimum_octets(Val, []).
-
+pre_encode(RP = #'EncAPRepPart'{subkey = K}) ->
+    RP#'EncAPRepPart'{subkey = pre_encode(K)};
+pre_encode(T = #'Ticket'{'enc-part' = EP}) ->
+    T#'Ticket'{'enc-part' = pre_encode(EP)};
+pre_encode(E = #'KRB-ERROR'{'error-code' = A}) when is_atom(A) ->
+    I = krb_errors:atom_to_err(A),
+    pre_encode(E#'KRB-ERROR'{'error-code' = I});
+pre_encode(APR = #'AP-REQ'{'ap-options' = B, ticket = T, authenticator = A}) when is_bitstring(B) ->
+    APR#'AP-REQ'{ticket = pre_encode(T), authenticator = pre_encode(A)};
+pre_encode(APR = #'AP-REQ'{'ap-options' = Set, ticket = T, authenticator = A}) ->
+    Bits = encode_bit_flags(Set, ?ap_flags),
+    APR#'AP-REQ'{'ap-options' = Bits, ticket = pre_encode(T),
+        authenticator = pre_encode(A)};
 pre_encode(PA = #'PA-DATA'{'padata-type' = 1, 'padata-value' = V0 = #'AP-REQ'{}}) ->
     {ok, D} = encode('AP-REQ', V0),
     PA#'PA-DATA'{'padata-value' = D};
@@ -307,6 +434,8 @@ pre_encode(A = #'Authenticator'{cksum = C = #'Checksum'{cksumtype = CK}}) when i
 pre_encode(C = #'Checksum'{cksumtype = CK}) when is_atom(CK) ->
     CKI = krb_crypto:atom_to_ctype(CK),
     pre_encode(C#'Checksum'{cksumtype = CKI});
+pre_encode(ED = #'EncryptedData'{etype = ET}) when is_atom(ET) ->
+    ED#'EncryptedData'{etype = krb_crypto:atom_to_etype(ET)};
 pre_encode(#krb_base_key{etype = ET, key = K}) ->
     #'EncryptionKey'{
         keytype = krb_crypto:atom_to_etype(ET),

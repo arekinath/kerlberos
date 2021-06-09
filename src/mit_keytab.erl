@@ -33,6 +33,8 @@
 
 -include("krb_key_records.hrl").
 
+-export_type([keytab_entry/0]).
+
 -type keytab_entry() :: #{
     realm => string(),
     principal => [string()],

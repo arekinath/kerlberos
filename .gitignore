@@ -5,8 +5,10 @@ priv/*.so
 c_src/*.o
 src/conf_parse.erl
 src/KRB5.erl
+src/SPNEGO.erl
 src/krb5conf.erl
 src/*.asn1db
 asngen
 _build
 include/KRB5.hrl
+include/SPNEGO.hrl

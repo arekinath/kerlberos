@@ -147,7 +147,7 @@ tgsreq(state_timeout, req, S0 = #?MODULE{proto = P, config = C}) ->
         'authenticator-vno' = 5,
         crealm = TgtRealm,
         cname = #'PrincipalName'{
-            'name-type' = 2,
+            'name-type' = 1,
             'name-string' = TgtPrincipal},
         ctime = NowKrb,
         cusec = USec,

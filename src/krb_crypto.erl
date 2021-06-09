@@ -55,9 +55,9 @@
 
 -type etype() :: des_crc | des_md4 | des_md5 | des3_md5 | des3_sha1 |
 	aes128_hmac_sha1 | aes256_hmac_sha1 | rc4_hmac | rc4_hmac_exp |
-	des3_sha1_nokd | aes128_hmac_sha256 | aes256_hmac_sha384 | des_sha1.
+	aes128_hmac_sha256 | aes256_hmac_sha384 | des_sha1 | des3_raw.
 -type ctype() :: hmac_sha1_aes128 | hmac_sha1_aes256 | hmac_sha256_aes128 |
-	hmac_sha384_aes256 | hmac_sha1_des3_kd | crc32 | md4 | md5.
+	hmac_sha384_aes256 | hmac_sha1_des3_kd | crc32 | sha1 | md4 | md5.
 
 -include("krb_key_records.hrl").
 
@@ -79,7 +79,7 @@ etype_to_atom(1) -> des_crc;
 etype_to_atom(2) -> des_md4;
 etype_to_atom(3) -> des_md5;
 etype_to_atom(5) -> des3_md5;
-etype_to_atom(7) -> des3_sha1_nokd; % deprecated version
+etype_to_atom(6) -> des3_raw;
 etype_to_atom(8) -> des_sha1;
 etype_to_atom(16) -> des3_sha1;
 etype_to_atom(17) -> aes128_hmac_sha1;              % rfc3962
@@ -94,9 +94,9 @@ etype_to_atom(N) -> error({unknown_etype, N}).
 atom_to_etype(des_crc) -> 1;
 atom_to_etype(des_md4) -> 2;
 atom_to_etype(des_md5) -> 3;
-atom_to_etype(des_sha1) -> 8;
 atom_to_etype(des3_md5) -> 5;
-atom_to_etype(des3_sha1_nokd) -> 7; % deprecated
+atom_to_etype(des3_raw) -> 6;
+atom_to_etype(des_sha1) -> 8;
 atom_to_etype(des3_sha1) -> 16;
 atom_to_etype(aes128_hmac_sha1) -> 17;
 atom_to_etype(aes256_hmac_sha1) -> 18;
@@ -110,7 +110,9 @@ atom_to_etype(A) -> error({unknown_etype, A}).
 ctype_to_atom(1) -> crc32;
 ctype_to_atom(2) -> md4;
 ctype_to_atom(7) -> md5;
+ctype_to_atom(10) -> sha1;
 ctype_to_atom(12) -> hmac_sha1_des3_kd;
+ctype_to_atom(14) -> sha1;
 ctype_to_atom(15) -> hmac_sha1_aes128;
 ctype_to_atom(16) -> hmac_sha1_aes256;
 ctype_to_atom(19) -> hmac_sha256_aes128;
@@ -121,6 +123,7 @@ ctype_to_atom(N) -> error({unknown_ctype, N}).
 atom_to_ctype(crc) -> 1;
 atom_to_ctype(md4) -> 2;
 atom_to_ctype(md5) -> 7;
+atom_to_ctype(sha1) -> 10;
 atom_to_ctype(hmac_sha1_des3_kd) -> 12;
 atom_to_ctype(hmac_sha1_aes128) -> 15;
 atom_to_ctype(hmac_sha1_aes256) -> 16;
@@ -132,8 +135,11 @@ atom_to_ctype(A) -> error({unknown_ctype, A}).
 ctype_for_etype(des_crc) -> crc;
 ctype_for_etype(des_md5) -> md5;
 ctype_for_etype(des3_md5) -> md5;
+ctype_for_etype(des3_sha1) -> hmac_sha1_des3_kd;
 ctype_for_etype(aes128_hmac_sha1) -> hmac_sha1_aes128;
 ctype_for_etype(aes256_hmac_sha1) -> hmac_sha1_aes256;
+ctype_for_etype(aes128_hmac_sha256) -> hmac_sha256_aes128;
+ctype_for_etype(aes256_hmac_sha384) -> hmac_sha384_aes256;
 ctype_for_etype(E) -> error({no_ctype_for_etype, E}).
 
 -spec key_etype(base_key()) -> etype().
@@ -155,6 +161,12 @@ base_key_to_ck_key(#krb_base_key{etype = EType, key = Key}) ->
     }).
 
 -spec checksum(ck_key(), binary(), cipher_options()) -> binary().
+checksum(#krb_ck_key{ctype = sha1}, Data, _Opts) ->
+    crypto:hash(sha, Data);
+checksum(#krb_ck_key{ctype = crc32}, Data, _Opts) ->
+    crc(Data);
+checksum(#krb_ck_key{ctype = md5}, Data, _Opts) ->
+    crypto:hash(md5, Data);
 checksum(#krb_ck_key{ctype = hmac_sha1_aes128, key = Key}, Data, Opts) ->
     Usage = maps:get(usage, Opts, 1),
     {Kc, _Ke, _Ki} = base_key_to_triad(aes128_hmac_sha1, Key, Usage),
@@ -166,7 +178,7 @@ checksum(#krb_ck_key{ctype = hmac_sha1_aes256, key = Key}, Data, Opts) ->
 checksum(#krb_ck_key{ctype = hmac_sha1_des3_kd, key = Key}, Data, Opts) ->
     Usage = maps:get(usage, Opts, 1),
     {Kc, _Ke, _Ki} = base_key_to_triad(des3_sha1, Key, Usage),
-    crypto:macN(hmac, sha, Kc, Data, 12);
+    crypto:macN(hmac, sha, Kc, Data, 20);
 checksum(#krb_ck_key{ctype = hmac_sha256_aes128, key = Key}, Data, Opts) ->
     Usage = maps:get(usage, Opts, 1),
     {Kc, _Ke, _Ki} = base_key_to_triad(aes128_hmac_sha256, Key, Usage),
@@ -574,8 +586,11 @@ pad_block(B) -> pad_block(B, 8).
 -spec pad_block(binary(), integer()) -> binary().
 pad_block(B, 1) -> B;
 pad_block(B, N) ->
-    PadSize = N - (byte_size(B) rem N),
-    <<B/binary, 0:PadSize/unit:8>>.
+    Rem = byte_size(B) rem 8,
+    case Rem of
+        0 -> B;
+        _ -> <<B/binary, 0:(N - Rem)/unit:8>>
+    end.
 
 -spec string_to_key(etype(), binary(), binary()) -> base_key().
 string_to_key(des_crc, String, Salt) ->
@@ -657,7 +672,8 @@ split_des3_bits(<<A:7, B:1, Rest/bitstring>>) ->
     {<<A:7, (odd_parity(A)):1, Ac0/bitstring>>,
      <<Bc0/bitstring, B:1>>}.
 
-des3_random_to_key(<<K0:56/bitstring, K1:56/bitstring, K2:56/bitstring>>) ->
+des3_random_to_key(<<K0:56/bitstring, K1:56/bitstring, K2:56/bitstring,
+                     _/bitstring>>) ->
     {AcP0, Bc0} = split_des3_bits(K0),
     {AcP1, Bc1} = split_des3_bits(K1),
     {AcP2, Bc2} = split_des3_bits(K2),
@@ -667,7 +683,8 @@ des3_random_to_key(<<K0:56/bitstring, K1:56/bitstring, K2:56/bitstring>>) ->
       AcP2/bitstring, B2:7, (odd_parity(B2)):1>>.
 
 aes_random_to_key(Cipher, Data) ->
-    dk(Cipher, Data, <<"kerberos">>).
+    #{key_length := KeySize} = crypto:cipher_info(Cipher),
+    dk(Cipher, binary:part(Data, 0, KeySize), <<"kerberos">>).
 
 des_string_to_key(String, Salt) ->
     Padded = pad_block(<<String/binary, Salt/binary>>),

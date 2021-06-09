@@ -27,7 +27,7 @@
 
 -module(krb_errors).
 
--export([err_to_atom/1]).
+-export([err_to_atom/1, atom_to_err/1]).
 
 err_to_atom(0) -> 'KDC_ERR_NONE';
 err_to_atom(1) -> 'KDC_ERR_NAME_EXP';
@@ -98,3 +98,73 @@ err_to_atom(74) -> 'KDC_ERR_REVOCATION_STATUS_UNAVAILABLE';
 err_to_atom(75) -> 'KDC_ERR_CLIENT_NAME_MISMATCH';
 err_to_atom(76) -> 'KDC_ERR_KDC_NAME_MISMATCH';
 err_to_atom(V) -> {unknown_error, V}.
+
+atom_to_err('KDC_ERR_NONE') -> 0;
+atom_to_err('KDC_ERR_NAME_EXP') -> 1;
+atom_to_err('KDC_ERR_SERVICE_EXP') -> 2;
+atom_to_err('KDC_ERR_BAD_PVNO') -> 3;
+atom_to_err('KDC_ERR_C_OLD_MAST_KVNO') -> 4;
+atom_to_err('KDC_ERR_S_OLD_MAST_KVNO') -> 5;
+atom_to_err('KDC_ERR_C_PRINCIPAL_UNKNOWN') -> 6;
+atom_to_err('KDC_ERR_S_PRINCIPAL_UNKNOWN') -> 7;
+atom_to_err('KDC_ERR_PRINCIPAL_NOT_UNIQUE') -> 8;
+atom_to_err('KDC_ERR_NULL_KEY') -> 9;
+atom_to_err('KDC_ERR_CANNOT_POSTDATE') -> 10;
+atom_to_err('KDC_ERR_NEVER_VALID') -> 11;
+atom_to_err('KDC_ERR_POLICY') -> 12;
+atom_to_err('KDC_ERR_BADOPTION') -> 13;
+atom_to_err('KDC_ERR_ETYPE_NOSUPP') -> 14;
+atom_to_err('KDC_ERR_SUMTYPE_NOSUPP') -> 15;
+atom_to_err('KDC_ERR_PADATA_TYPE_NOSUPP') -> 16;
+atom_to_err('KDC_ERR_TRTYPE_NOSUPP') -> 17;
+atom_to_err('KDC_ERR_CLIENT_REVOKED') -> 18;
+atom_to_err('KDC_ERR_SERVICE_REVOKED') -> 19;
+atom_to_err('KDC_ERR_TGT_REVOKED') -> 20;
+atom_to_err('KDC_ERR_CLIENT_NOTYET') -> 21;
+atom_to_err('KDC_ERR_SERVICE_NOTYET') -> 22;
+atom_to_err('KDC_ERR_KEY_EXPIRED') -> 23;
+atom_to_err('KDC_ERR_PREAUTH_FAILED') -> 24;
+atom_to_err('KDC_ERR_PREAUTH_REQUIRED') -> 25;
+atom_to_err('KDC_ERR_SERVER_NOMATCH') -> 26;
+atom_to_err('KDC_ERR_MUST_USE_USER2USER') -> 27;
+atom_to_err('KDC_ERR_PATH_NOT_ACCEPTED') -> 28;
+atom_to_err('KDC_ERR_SVC_UNAVAILABLE') -> 29;
+atom_to_err('KRB_AP_ERR_BAD_INTEGRITY') -> 31;
+atom_to_err('KRB_AP_ERR_TKT_EXPIRED') -> 32;
+atom_to_err('KRB_AP_ERR_TKT_NYV') -> 33;
+atom_to_err('KRB_AP_ERR_REPEAT') -> 34;
+atom_to_err('KRB_AP_ERR_NOT_US') -> 35;
+atom_to_err('KRB_AP_ERR_BADMATCH') -> 36;
+atom_to_err('KRB_AP_ERR_SKEW') -> 37;
+atom_to_err('KRB_AP_ERR_BADADDR') -> 38;
+atom_to_err('KRB_AP_ERR_BADVERSION') -> 39;
+atom_to_err('KRB_AP_ERR_MSG_TYPE') -> 40;
+atom_to_err('KRB_AP_ERR_MODIFIED') -> 41;
+atom_to_err('KRB_AP_ERR_BADORDER') -> 42;
+atom_to_err('KRB_AP_ERR_BADKEYVER') -> 44;
+atom_to_err('KRB_AP_ERR_NOKEY') -> 45;
+atom_to_err('KRB_AP_ERR_MUT_FAIL') -> 46;
+atom_to_err('KRB_AP_ERR_BADDIRECTION') -> 47;
+atom_to_err('KRB_AP_ERR_METHOD') -> 48;
+atom_to_err('KRB_AP_ERR_BADSEQ') -> 49;
+atom_to_err('KRB_AP_ERR_INAPP_CKSUM') -> 50;
+atom_to_err('KRB_AP_PATH_NOT_ACCEPTED') -> 51;
+atom_to_err('KRB_ERR_RESPONSE_TOO_BIG') -> 52;
+atom_to_err('KRB_ERR_GENERIC') -> 60;
+atom_to_err('KRB_ERR_FIELD_TOOLONG') -> 61;
+atom_to_err('KDC_ERROR_CLIENT_NOT_TRUSTED') -> 62;
+atom_to_err('KDC_ERROR_KDC_NOT_TRUSTED') -> 63;
+atom_to_err('KDC_ERROR_INVALID_SIG') -> 64;
+atom_to_err('KDC_ERR_KEY_TOO_WEAK') -> 65;
+atom_to_err('KDC_ERR_CERTIFICATE_MISMATCH') -> 66;
+atom_to_err('KRB_AP_ERR_NO_TGT') -> 67;
+atom_to_err('KDC_ERR_WRONG_REALM') -> 68;
+atom_to_err('KRB_AP_ERR_USER_TO_USER_REQUIRED') -> 69;
+atom_to_err('KDC_ERR_CANT_VERIFY_CERTIFICATE') -> 70;
+atom_to_err('KDC_ERR_INVALID_CERTIFICATE') -> 71;
+atom_to_err('KDC_ERR_REVOKED_CERTIFICATE') -> 72;
+atom_to_err('KDC_ERR_REVOCATION_STATUS_UNKNOWN') -> 73;
+atom_to_err('KDC_ERR_REVOCATION_STATUS_UNAVAILABLE') -> 74;
+atom_to_err('KDC_ERR_CLIENT_NAME_MISMATCH') -> 75;
+atom_to_err('KDC_ERR_KDC_NAME_MISMATCH') -> 76;
+atom_to_err(V) -> {unknown_error, V}.
