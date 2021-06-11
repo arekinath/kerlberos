@@ -36,7 +36,7 @@ decode(Bin = <<Count:32/little, Version:32/little, Rem/binary>>) ->
     Bufs = decode_info_bufs(Count, Rem, Bin),
     #pac{version = Version, buffers = Bufs}.
 
-decode_info_bufs(0, _, Bin) -> [];
+decode_info_bufs(0, _, _Bin) -> [];
 decode_info_bufs(N, <<Type:32/little, Size:32/little, Offset:64/little, Rem/binary>>, Bin) ->
     <<_:Offset/binary, Segment:Size/binary, _/binary>> = Bin,
     Rec = case Type of
@@ -59,7 +59,7 @@ decode_client_info(Segment, _Bin) ->
 
 decode_upn_dns(Segment, _Bin) ->
     <<UpnLen:16/little, UpnOffset:16/little, DnsNameLen:16/little,
-      DnsNameOffset:16/little, Flags:32/little, _/binary>> =Segment,
+      DnsNameOffset:16/little, _Flags:32/little, _/binary>> =Segment,
     <<_:UpnOffset/binary, Upn:UpnLen/binary, _/binary>> = Segment,
     <<_:DnsNameOffset/binary, DnsName:DnsNameLen/binary, _/binary>> = Segment,
     #pac_upn_dns{
@@ -67,7 +67,7 @@ decode_upn_dns(Segment, _Bin) ->
         dns_name = unicode:characters_to_binary(DnsName, {utf16, little}, utf8)
     }.
 
-decode_logon_info(Segment, Bin) ->
+decode_logon_info(Segment, _Bin) ->
     S0 = rpce:start(Segment),
     {LogonTime, S1} = rpce:read(filetime, S0),
     {LogoffTime, S2} = rpce:read(filetime, S1),
@@ -84,33 +84,34 @@ decode_logon_info(Segment, Bin) ->
     {LogonCount, S13} = rpce:read(ushort, S12),
     {BadPasswordCount, S14} = rpce:read(ushort, S13),
     {UserId, S15} = rpce:read(ulong, S14),
-    {PrimaryGroupId, S16} = rpce:read(ulong, S15),
-    {GroupCount, S17} = rpce:read(ulong, S16),
+    {_PrimaryGroupId, S16} = rpce:read(ulong, S15),
+    {_GroupCount, S17} = rpce:read(ulong, S16),
     {GroupsPtr, S18} = rpce:read({pointer, {array, group_membership}}, S17),
-    {UserFlags, S19} = rpce:read(ulong, S18),
+    {_UserFlags, S19} = rpce:read(ulong, S18),
     {_SessKey, S20} = rpce:read(user_session_key, S19),
     {LogonServerPtr, S21} = rpce:read(rpc_unicode_string, S20),
     {LogonDomainNamePtr, S22} = rpce:read(rpc_unicode_string, S21),
     {LogonDomainIdPtr, S23} = rpce:read({pointer, sid}, S22),
     {_Reserved1, S24} = rpce:read(ulong, S23),
     {_Reserved2, S25} = rpce:read(ulong, S24),
-    {UAC, S26} = rpce:read(ulong, S25),
-    {SubAuthStatus, S27} = rpce:read(ulong, S26),
-    {LastSuccessfulILogon, S28} = rpce:read(filetime, S27),
-    {LastFailedILogon, S29} = rpce:read(filetime, S28),
-    {FailedILogonCount, S30} = rpce:read(ulong, S29),
+    {_UAC, S26} = rpce:read(ulong, S25),
+    {_SubAuthStatus, S27} = rpce:read(ulong, S26),
+    {_LastSuccessfulILogon, S28} = rpce:read(filetime, S27),
+    {_LastFailedILogon, S29} = rpce:read(filetime, S28),
+    {_FailedILogonCount, S30} = rpce:read(ulong, S29),
     {_Reserved3, S31} = rpce:read(ulong, S30),
-    {SidCount, S32} = rpce:read(ulong, S31),
+    {_SidCount, S32} = rpce:read(ulong, S31),
     {SidPtr, S33} = rpce:read({pointer, {array, kerb_sid_and_attributes}}, S32),
-    {RscGroupDomainSid, S34} = rpce:read({pointer, sid}, S33),
-    {RscGroupCount, S35} = rpce:read(ulong, S34),
-    {RscGroupPtr, S36} = rpce:read({pointer, {array, group_membership}}, S35),
+    {_RscGroupDomainSid, S34} = rpce:read({pointer, sid}, S33),
+    {_RscGroupCount, S35} = rpce:read(ulong, S34),
+    {_RscGroupPtr, S36} = rpce:read({pointer, {array, group_membership}}, S35),
     SFinal = rpce:finish(S36),
 
     Sids0 = rpce:get_ptr(SidPtr, SFinal),
     Sids1 = [S#sid_and_attributes{
         sid = rpce:get_ptr(SidPtr, SFinal)}
-            || S = #sid_and_attributes{sid_ptr = SidPtr} <- Sids0],
+            || S = #sid_and_attributes{sid_ptr = ASidPtr} <- Sids0,
+               ASidPtr =:= SidPtr],
 
     #pac_logon_info{
         times = #{

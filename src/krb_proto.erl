@@ -232,7 +232,7 @@ find_key(ET, [#{key := K = #krb_base_key{etype = ET}} | _]) -> K;
 find_key(ET, [K = #krb_base_key{etype = ET} | _]) -> K;
 find_key(ET, K = #krb_base_key{etype = ET}) -> K;
 find_key(ET, [_ | Rest]) -> find_key(ET, Rest);
-find_key(ET, Ks) -> no_key_found.
+find_key(_ET, _Ks) -> no_key_found.
 
 -type keyset() ::
     krb_crypto:base_key() |
@@ -240,7 +240,7 @@ find_key(ET, Ks) -> no_key_found.
     [mit_keytab:keytab_entry()].
 
 -spec decrypt(keyset(), krb_crypto:usage(), encrypted()) -> {ok, decrypted()} | {error, term()}.
-decrypt(Ks, Usage, EP = #'EncryptedData'{etype = EType, cipher = CT}) ->
+decrypt(Ks, Usage, #'EncryptedData'{etype = EType, cipher = CT}) ->
     case find_key(EType, Ks) of
         no_key_found ->
             {error, {no_key_found, EType}};
@@ -413,12 +413,6 @@ asn1_encode_length(L) when L =< 127 ->
 asn1_encode_length(L) ->
     Bytes = binary:encode_unsigned(L),
     <<1:1, (byte_size(Bytes)):7, Bytes/binary>>.
-
-asn1_decode_length(<<0:1, Len:7, Data:Len/binary, Rest/binary>>) ->
-    {Len, Data, Rest};
-asn1_decode_length(<<1:1, LenBytes:7, Len:LenBytes/big-unit:8,
-                     Data:Len/binary, Rest/binary>>) ->
-    {Len, Data, Rest}.
 
 pre_encode(RP = #'EncAPRepPart'{subkey = K}) ->
     RP#'EncAPRepPart'{subkey = pre_encode(K)};
