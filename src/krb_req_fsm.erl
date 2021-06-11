@@ -113,7 +113,9 @@ udp_single(state_timeout, multi, S0 = #?MODULE{req = Req, proto = FSM}) ->
 udp_single(info, {krb_error, Req}, S0 = #?MODULE{req = Req}) ->
     {next_state, tcp, S0};
 udp_single(info, {krb_reply, Req, #'KRB-ERROR'{'error-code' = 'KRB_ERR_RESPONSE_TOO_BIG'}},
-                                                S0 = #?MODULE{req = Req}) ->
+                                                S0 = #?MODULE{req = Req,
+                                                              proto = FSM}) ->
+    krb_proto_srv:cancel_req(FSM, Req),
     {next_state, tcp, S0};
 udp_single(info, {krb_reply, Req, E = #'KRB-ERROR'{}}, S0 = #?MODULE{req = Req}) ->
     S1 = S0#?MODULE{err = E},
@@ -130,10 +132,13 @@ udp_single({call, From}, await, S0 = #?MODULE{awaiters = Aws0}) ->
 udp_multi(enter, _PrevState, S0 = #?MODULE{}) ->
     S1 = send_req(udp, 3, S0),
     {keep_state, S1};
-udp_multi(info, {krb_error, Req}, S0 = #?MODULE{req = Req}) ->
+udp_multi(info, {krb_error, Req}, S0 = #?MODULE{req = Req, proto = FSM}) ->
+    krb_proto_srv:cancel_req(FSM, Req),
     {next_state, tcp, S0};
 udp_multi(info, {krb_reply, Req, #'KRB-ERROR'{'error-code' = 'KRB_ERR_RESPONSE_TOO_BIG'}},
-                                                S0 = #?MODULE{req = Req}) ->
+                                                S0 = #?MODULE{proto = FSM,
+                                                              req = Req}) ->
+    krb_proto_srv:cancel_req(FSM, Req),
     {next_state, tcp, S0};
 udp_multi(info, {krb_reply, Req, E = #'KRB-ERROR'{}}, S0 = #?MODULE{req = Req}) ->
     S1 = S0#?MODULE{err = E},
