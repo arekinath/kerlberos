@@ -99,7 +99,6 @@ translate_name({_R, #'PrincipalName'{}}, _Oid) ->
 translate_name(_Name, _Oid) ->
     {error, bad_name}.
 
--define(krb5_mech_oid, {1, 2, 840, 113554, 1, 2, 2}).
 -define(default_max_skew, 300000).
 
 -type sig_alg() :: des_mac_md5 | md25 | des_mac.
@@ -365,7 +364,8 @@ initiate(C) ->
         md5 ->
             CksumData1;
         _ ->
-            KrbMic = krb_crypto:checksum(CKey, Bindings1, #{usage => 43}),
+            KrbMic = krb_crypto:checksum(CKey, Bindings1,
+                #{usage => gss_new_checksum}),
             [CksumData1, <<0:32/big, (byte_size(KrbMic)):32/big,
                            KrbMic/binary>>]
     end,
@@ -395,10 +395,10 @@ initiate(C) ->
         authenticator = Auth,
         'ap-options' = sets:from_list(APOptions)
     },
-    APReq1 = krb_proto:encrypt(Key, 11, APReq0),
+    APReq1 = krb_proto:encrypt(Key, ap_req_auth, APReq0),
 
     MechData = encode_token(APReq1),
-    Token = gss_token:encode_initial(?krb5_mech_oid, MechData),
+    Token = gss_token:encode_initial(?'id-mech-krb5', MechData),
 
     S0 = #?MODULE{party = initiator, opts = C, nonce = Nonce, tktkey = Key,
         ikey = SessKey, seq = Nonce, rseq = Nonce, them = {Realm, Them},
@@ -425,13 +425,13 @@ filter_keytab(KeyTab, #'Ticket'{realm = Realm, sname = SvcName}) ->
 init_error(Realm, Service, Code, S0 = #?MODULE{}) ->
     Err = krb_proto:make_error(Realm, Service, Code),
     MechData = encode_token(Err),
-    Token = gss_token:encode_initial(?krb5_mech_oid, MechData),
+    Token = gss_token:encode_initial(?'id-mech-krb5', MechData),
     {continue, Token, S0#?MODULE{continue = error}}.
 
 init_generic_error(Realm, Service, Why, S0 = #?MODULE{}) ->
     Err = krb_proto:make_generic_error(Realm, Service, Why),
     MechData = encode_token(Err),
-    Token = gss_token:encode_initial(?krb5_mech_oid, MechData),
+    Token = gss_token:encode_initial(?'id-mech-krb5', MechData),
     {continue, Token, S0#?MODULE{continue = error}}.
 
 accept(Token, C) ->
@@ -440,7 +440,7 @@ accept(Token, C) ->
     case (catch gss_token:decode_initial(Token)) of
         {'EXIT', Reason} ->
             {error, {defective_token, Reason}};
-        {?krb5_mech_oid, MechData, <<>>} ->
+        {?'id-mech-krb5', MechData, <<>>} ->
             case (catch decode_token(MechData)) of
                 {'EXIT', Reason} ->
                     {error, {defective_token, Reason}};
@@ -451,7 +451,7 @@ accept(Token, C) ->
                     #{realm := Realm, principal := Service} = KT0,
                     init_error(Realm, Service, 'KRB_AP_ERR_MSG_TYPE', S0)
             end;
-        {?krb5_mech_oid, _MechData, Extra} ->
+        {?'id-mech-krb5', _MechData, Extra} ->
             {error, {defective_token, {extra_bytes, Extra}}};
         {OtherOid, _, _} ->
             {error, {bad_mech, OtherOid}}
@@ -466,7 +466,7 @@ accept_req(APReq0, S0 = #?MODULE{opts = C}) ->
     %Mutual = sets:is_element(mutual, APOpts),
     case filter_keytab(KeyTab, Ticket0) of
         {ok, KeySet} ->
-            case krb_proto:decrypt(KeySet, 2, Ticket0) of
+            case krb_proto:decrypt(KeySet, kdc_rep_ticket, Ticket0) of
                 {ok, Ticket1} ->
                     #'Ticket'{'enc-part' = ETP} = Ticket1,
                     #'EncTicketPart'{key = TktKey,
@@ -486,7 +486,7 @@ accept_req(APReq0, S0 = #?MODULE{opts = C}) ->
                         true ->
                             Us = {Realm, SName},
                             Them = {CRealm, CName},
-                            case krb_proto:decrypt(TktKey, 11, APReq0) of
+                            case krb_proto:decrypt(TktKey, ap_req_auth, APReq0) of
                                 {ok, APReq1 = #'AP-REQ'{}} ->
                                     #'AP-REQ'{authenticator = A} = APReq1,
                                     S1 = S0#?MODULE{us = Us, them = Them,
@@ -598,7 +598,7 @@ accept_auth(A, S0 = #?MODULE{tktkey = TktKey, opts = C,
                         <<0:32/big, MicSize:32/big, Mic:MicSize/binary>>
                                                                 when Valid ->
                             OurMic = krb_crypto:checksum(CKey, Bindings1,
-                                #{usage => 43}),
+                                #{usage => gss_new_checksum}),
                             if
                                 Mic =:= OurMic ->
                                     accept_send_rep(A, S2);
@@ -614,7 +614,8 @@ accept_auth(A, S0 = #?MODULE{tktkey = TktKey, opts = C,
                     end;
 
                 #'Checksum'{cksumtype = CTypeI, checksum = C} ->
-                    OurC = krb_crypto:checksum(CKey, <<>>, #{usage => 1}),
+                    OurC = krb_crypto:checksum(CKey, <<>>,
+                        #{usage => app_data_cksum}),
                     C = OurC,
                     accept_send_rep(A, S2)
             end
@@ -649,9 +650,9 @@ accept_send_rep(A = #'Authenticator'{}, S0 = #?MODULE{opts = C}) ->
                 'msg-type' = 15,
                 'enc-part' = APRepPart
             },
-            APRep1 = krb_proto:encrypt(Key, 12, APRep0),
+            APRep1 = krb_proto:encrypt(Key, ap_rep_encpart, APRep0),
             MechData = encode_token(APRep1),
-            Token = gss_token:encode_initial(?krb5_mech_oid, MechData),
+            Token = gss_token:encode_initial(?'id-mech-krb5', MechData),
 
             S1 = S0#?MODULE{ackey = ACKey},
             {ok, Token, S1}
@@ -662,7 +663,7 @@ continue(Token, S0 = #?MODULE{continue = initiate, party = initiator}) ->
     case (catch gss_token:decode_initial(Token)) of
         {'EXIT', Reason} ->
             {error, {defective_token, Reason}};
-        {?krb5_mech_oid, MechData, <<>>} ->
+        {?'id-mech-krb5', MechData, <<>>} ->
             case (catch decode_token(MechData)) of
                 {'EXIT', Reason} ->
                     {error, {defective_token, Reason}};
@@ -672,7 +673,7 @@ continue(Token, S0 = #?MODULE{continue = initiate, party = initiator}) ->
                 #'KRB-ERROR'{'error-code' = EC} ->
                     {error, {krb_error, EC}};
                 APRep0 = #'AP-REP'{} ->
-                    case krb_proto:decrypt(Key, 12, APRep0) of
+                    case krb_proto:decrypt(Key, ap_rep_encpart, APRep0) of
                         {ok, APRep1} ->
                             #'AP-REP'{'enc-part' = EP} = APRep1,
                             #'EncAPRepPart'{'seq-number' = Nonce} = EP,
@@ -699,7 +700,7 @@ continue(Token, S0 = #?MODULE{continue = initiate, party = initiator}) ->
                         Realm, Service, 'KRB_AP_ERR_MSG_TYPE')),
                     {continue, ErrToken, S0#?MODULE{continue = error}}
             end;
-        {?krb5_mech_oid, _MechData, Extra} ->
+        {?'id-mech-krb5', _MechData, Extra} ->
             {error, {defective_token, {extra_bytes, Extra}}};
         {OtherOid, _, _} ->
             {error, {bad_mech, OtherOid}}
@@ -716,8 +717,8 @@ get_mic(Message, S0 = #?MODULE{continue = undefined}) ->
     Integ = maps:get(integrity, C, true),
     Integ = true,
     Usage = case Party of
-        acceptor -> 23;
-        initiator -> 25
+        acceptor -> gss_acceptor_sign;
+        initiator -> gss_initiator_sign
     end,
     Flags0 = sets:new(),
     Flags1 = case Party of
@@ -741,8 +742,8 @@ wrap(Message, S0 = #?MODULE{continue = undefined}) ->
     Integ = maps:get(integrity, C, true),
     Conf = true, Integ = true,
     Usage = case Party of
-        acceptor -> 22;
-        initiator -> 24
+        acceptor -> gss_acceptor_seal;
+        initiator -> gss_initiator_seal
     end,
     Flags0 = sets:from_list([sealed]),
     Flags1 = case Party of
@@ -767,8 +768,8 @@ unwrap(Token, S0 = #?MODULE{continue = undefined}) ->
     case decode_token(Token) of
         T0 = #wrap_token_v2{flags = Flags, seq = RSeq0} ->
             Usage = case Party of
-                acceptor -> 24;
-                initiator -> 22
+                acceptor -> gss_initiator_seal;
+                initiator -> gss_acceptor_seal
             end,
             Key = case sets:is_element(acceptor_subkey, Flags) of
                 true -> ACKey;
@@ -799,8 +800,8 @@ verify_mic(Message, Token, S0 = #?MODULE{continue = undefined}) ->
     case decode_token(Token) of
         T0 = #mic_token_v2{flags = Flags, seq = RSeq0} ->
             Usage = case Party of
-                acceptor -> 25;
-                initiator -> 23
+                acceptor -> gss_initiator_sign;
+                initiator -> gss_acceptor_sign
             end,
             Key = case sets:is_element(acceptor_subkey, Flags) of
                 true -> ACKey;

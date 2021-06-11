@@ -142,7 +142,7 @@ tgsreq(state_timeout, req, S0 = #?MODULE{proto = P, config = C}) ->
         etype = ETypes
     },
     CKey = krb_crypto:base_key_to_ck_key(TgtKey),
-    Cksum = krb_proto:checksum(CKey, 6, ReqBody),
+    Cksum = krb_proto:checksum(CKey, tgs_req_auth_cksum, ReqBody),
     Auth = #'Authenticator'{
         'authenticator-vno' = 5,
         crealm = TgtRealm,
@@ -161,15 +161,15 @@ tgsreq(state_timeout, req, S0 = #?MODULE{proto = P, config = C}) ->
         authenticator = Auth,
         'ap-options' = <<0:32>>
     },
-    APReq1 = krb_proto:encrypt(TgtKey, 7, APReq0),
+    APReq1 = krb_proto:encrypt(TgtKey, tgs_req_auth, APReq0),
     PAData0 = [
-        #'PA-DATA'{'padata-type' = 1, 'padata-value' = APReq1}
+        #'PA-DATA'{'padata-value' = APReq1}
     ],
     PAData1 = case RequestPAC of
         true ->
-            PacReq = #'PA-PAC-REQUEST'{'include-pac' = true},
             PAData0 ++ [
-                #'PA-DATA'{'padata-type' = 128, 'padata-value' = PacReq}
+                #'PA-DATA'{'padata-value' =
+                    #'PA-PAC-REQUEST'{'include-pac' = true}}
             ];
         false -> PAData0
     end,
@@ -196,7 +196,7 @@ tgsreq(krb, R0 = #'KDC-REP'{}, S0 = #?MODULE{nonce = Nonce, key = Key}) ->
     NowKrb = krb_proto:system_time_to_krbtime(
         erlang:system_time(second), second),
 
-    {ok, R1} = krb_proto:decrypt(Key, 9, R0),
+    {ok, R1} = krb_proto:decrypt(Key, tgs_rep_encpart_subkey, R0),
     #'KDC-REP'{'enc-part' = EP} = R1,
 
     Err = case EP of

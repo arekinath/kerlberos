@@ -158,8 +158,12 @@ probe(krb, E = #'KRB-ERROR'{'error-code' = 'KDC_ERR_PREAUTH_REQUIRED'},
     EType2s = [D || #'PA-DATA'{'padata-type' = 19, 'padata-value' = D} <- EDs],
     EType1s = [D || #'PA-DATA'{'padata-type' = 11, 'padata-value' = D} <- EDs],
     {EType, Salt} = case {EType2s, EType1s} of
+        {[[#'ETYPE-INFO2-ENTRY'{etype = ET, salt = asn1_NOVALUE} | _]], _} ->
+            {krb_crypto:etype_to_atom(ET), <<>>};
         {[[#'ETYPE-INFO2-ENTRY'{etype = ET, salt = S} | _]], _} ->
             {krb_crypto:etype_to_atom(ET), iolist_to_binary([S])};
+        {[], [[#'ETYPE-INFO-ENTRY'{etype = ET, salt = asn1_NOVALUE} | _]]} ->
+            {krb_crypto:etype_to_atom(ET), <<>>};
         {[], [[#'ETYPE-INFO-ENTRY'{etype = ET, salt = S} | _]]} ->
             {krb_crypto:etype_to_atom(ET), iolist_to_binary([S])};
         _ ->
@@ -226,22 +230,19 @@ auth(state_timeout, req, S0 = #?MODULE{proto = P, config = C, salt = S,
         nonce = Nonce,
         etype = [krb_crypto:atom_to_etype(ET)]
     },
-    PAEncTs = #'PA-ENC-TS-ENC'{
-        patimestamp = NowKrb,
-        pausec = USec
+    PAEncTs0 = #'PA-DATA'{
+        'padata-value' = #'PA-ENC-TS-ENC'{
+            patimestamp = NowKrb,
+            pausec = USec
+        }
     },
-    {ok, PAEncPlain} = 'KRB5':encode('PA-ENC-TS-ENC', PAEncTs),
     Key = krb_crypto:string_to_key(ET, Secret, S),
-    EncData = #'EncryptedData'{
-        etype = krb_crypto:atom_to_etype(ET),
-        cipher = krb_crypto:encrypt(Key, PAEncPlain, #{usage => 1})
-    },
-    {ok, PAEnc} = 'KRB5':encode('PA-ENC-TIMESTAMP', EncData),
-    PAData = [#'PA-DATA'{'padata-type' = 2, 'padata-value' = PAEnc}],
+    PAEncTs1 = krb_proto:encrypt(Key, as_req_pa_enc_ts, PAEncTs0),
+
     Req = #'KDC-REQ'{
         pvno = 5,
         'msg-type' = 10,
-        padata = PAData,
+        padata = [PAEncTs1],
         'req-body' = ReqBody
     },
     S1 = S0#?MODULE{key = Key, nonce = Nonce},
@@ -260,7 +261,7 @@ auth(krb, R0 = #'KDC-REP'{}, S0 = #?MODULE{nonce = Nonce, key = Key}) ->
     NowKrb = krb_proto:system_time_to_krbtime(
         erlang:system_time(second), second),
 
-    {ok, R1} = krb_proto:decrypt(Key, 3, R0),
+    {ok, R1} = krb_proto:decrypt(Key, as_rep_encpart, R0),
     #'KDC-REP'{'enc-part' = EP} = R1,
 
     Err = case EP of

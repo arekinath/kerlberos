@@ -315,13 +315,15 @@ inner_decode(Type, Bin) ->
     #'KDC-REP'{'enc-part' :: #'EncryptedData'{}} |
     #'AP-REP'{'enc-part' :: #'EncryptedData'{}} |
     #'AP-REQ'{'authenticator' :: #'EncryptedData'{}} |
-    #'Ticket'{'enc-part' :: #'EncryptedData'{}}.
+    #'Ticket'{'enc-part' :: #'EncryptedData'{}} |
+    #'PA-DATA'{'padata-value' :: binary()}.
 -type decrypted() ::
     binary() |
     #'KDC-REP'{'enc-part' :: #'EncKDCRepPart'{}} |
     #'AP-REP'{'enc-part' :: #'EncAPRepPart'{}} |
     #'AP-REQ'{'authenticator' :: #'Authenticator'{}} |
-    #'Ticket'{'enc-part' :: #'EncTicketPart'{}}.
+    #'Ticket'{'enc-part' :: #'EncTicketPart'{}} |
+    #'PA-DATA'{'padata-value' :: #'PA-ENC-TS-ENC'{}}.
 
 -spec encrypt(krb_crypto:base_key(), krb_crypto:usage(), decrypted()) -> encrypted().
 encrypt(K, Usage, R0 = #'AP-REQ'{authenticator = A}) ->
@@ -341,7 +343,17 @@ encrypt(K, Usage, R0 = #'AP-REP'{'enc-part' = #'EncAPRepPart'{} = EP}) ->
         etype = krb_crypto:atom_to_etype(EType),
         cipher = Ciphertext
     },
-    R0#'AP-REP'{'enc-part' = ED}.
+    R0#'AP-REP'{'enc-part' = ED};
+encrypt(K, Usage, R0 = #'PA-DATA'{'padata-value' = V0 = #'PA-ENC-TS-ENC'{}}) ->
+    #krb_base_key{etype = EType} = K,
+    {ok, Plaintext} = encode('PA-ENC-TS-ENC', V0),
+    Ciphertext = krb_crypto:encrypt(K, Plaintext, #{usage => Usage}),
+    ED = #'EncryptedData'{
+        etype = krb_crypto:atom_to_etype(EType),
+        cipher = Ciphertext
+    },
+    {ok, V1} = encode('EncryptedData', ED),
+    R0#'PA-DATA'{'padata-type' = 2, 'padata-value' = V1}.
 
 -spec checksum(krb_crypto:ck_key(), krb_crypto:usage(), #'KDC-REQ-BODY'{} | binary()) -> #'Checksum'{}.
 checksum(CK, Usage, B = #'KDC-REQ-BODY'{}) ->
@@ -421,12 +433,12 @@ pre_encode(APR = #'AP-REQ'{'ap-options' = Set, ticket = T, authenticator = A}) -
     Bits = encode_bit_flags(Set, ?ap_flags),
     APR#'AP-REQ'{'ap-options' = Bits, ticket = pre_encode(T),
         authenticator = pre_encode(A)};
-pre_encode(PA = #'PA-DATA'{'padata-type' = 1, 'padata-value' = V0 = #'AP-REQ'{}}) ->
+pre_encode(PA = #'PA-DATA'{'padata-value' = V0 = #'AP-REQ'{}}) ->
     {ok, D} = encode('AP-REQ', V0),
-    PA#'PA-DATA'{'padata-value' = D};
-pre_encode(PA = #'PA-DATA'{'padata-type' = 128, 'padata-value' = V0 = #'PA-PAC-REQUEST'{}}) ->
+    PA#'PA-DATA'{'padata-type' = 1, 'padata-value' = D};
+pre_encode(PA = #'PA-DATA'{'padata-value' = V0 = #'PA-PAC-REQUEST'{}}) ->
     {ok, D} = encode('PA-PAC-REQUEST', V0),
-    PA#'PA-DATA'{'padata-value' = D};
+    PA#'PA-DATA'{'padata-type' = 128, 'padata-value' = D};
 pre_encode(R = #'KDC-REQ-BODY'{etype = ETs}) ->
     ETIs = lists:map(fun
         (I) when is_integer(I) -> I;

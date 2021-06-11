@@ -9,12 +9,25 @@ MechType::= OBJECT IDENTIFIER
 id-gssapi OBJECT IDENTIFIER ::= {
     iso(1) member-body(2) us(840) mit(113554) infosys(1) gssapi(2)
 }
+id-spnego OBJECT IDENTIFIER ::= {
+    iso(1) identified-organization(3) dod(6) internet(1) security(5) mechanisms(5) snego(2)
+}
 
 id-user-name OBJECT IDENTIFIER ::= { id-gssapi generic(1) user-name(1) }
 id-machine-uid-name OBJECT IDENTIFIER ::= { id-gssapi generic(1) machine-uid-name(2) }
 id-string-uid-name OBJECT IDENTIFIER ::= { id-gssapi generic(1) string-uid-name(3) }
 id-service-name OBJECT IDENTIFIER ::= { id-gssapi generic(1) service-name(4) }
 id-krb5-name OBJECT IDENTIFIER ::= { id-gssapi krb5(2) krb5-name(1) }
+
+id-ms-mechs OBJECT IDENTIFIER ::= {
+    iso(1) identified-organization(3) dod(6) internet(1) private(4) enterprise(1) microsoft(311)
+    security(2) mechanisms(2)
+}
+id-mech-spnego OBJECT IDENTIFIER ::= { id-spnego }
+id-mech-snegoex OBJECT IDENTIFIER ::= { id-ms-mechs snegoex(30) }
+id-mech-ntlm OBJECT IDENTIFIER ::= { id-ms-mechs ntlm(10) }
+id-mech-krb5 OBJECT IDENTIFIER ::= { id-gssapi krb5(2) }
+id-mech-krb5-usertouser OBJECT IDENTIFIER ::= { id-gssapi krb5(2) usertouser(3) }
 
 NegotiationToken ::= CHOICE {
                               negTokenInit  [0]  NegTokenInit,

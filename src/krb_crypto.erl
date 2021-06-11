@@ -59,12 +59,73 @@
 -type ctype() :: hmac_sha1_aes128 | hmac_sha1_aes256 | hmac_sha256_aes128 |
 	hmac_sha384_aes256 | hmac_sha1_des3_kd | crc32 | sha1 | md4 | md5.
 
+-type usage() :: as_req_pa_enc_ts | kdc_rep_ticket | as_rep_encpart |
+    tgs_req_ad_sesskey | tgs_req_ad_subkey | tgs_req_auth_cksum |
+    tgs_req_auth | tgs_rep_encpart_sesskey | tgs_rep_encpart_subkey |
+    ap_req_auth_cksum | ap_req_auth | ap_rep_encpart | krb_priv_encpart |
+    krb_cred_encpart | krb_safe_cksum | app_data_encrypt | app_data_cksum |
+    krb_error_cksum | ad_kdcissued_cksum | ad_mte | ad_ite |
+    gss_acceptor_seal | gss_acceptor_sign | gss_initiator_seal |
+    gss_initiator_sign | gss_new_checksum.
+
+-spec usage_a2i(usage()) -> integer().
+usage_a2i(as_req_pa_enc_ts) -> 1;
+usage_a2i(kdc_rep_ticket) -> 2;
+usage_a2i(as_rep_encpart) -> 3;
+usage_a2i(tgs_req_ad_sesskey) -> 4;
+usage_a2i(tgs_req_ad_subkey) -> 5;
+usage_a2i(tgs_req_auth_cksum) -> 6;
+usage_a2i(tgs_req_auth) -> 7;
+usage_a2i(tgs_rep_encpart_sesskey) -> 8;
+usage_a2i(tgs_rep_encpart_subkey) -> 9;
+usage_a2i(ap_req_auth_cksum) -> 10;
+usage_a2i(ap_req_auth) -> 11;
+usage_a2i(ap_rep_encpart) -> 12;
+usage_a2i(krb_priv_encpart) -> 13;
+usage_a2i(krb_cred_encpart) -> 14;
+usage_a2i(krb_safe_cksum) -> 15;
+usage_a2i(app_data_encrypt) -> 16;
+usage_a2i(app_data_cksum) -> 17;
+usage_a2i(krb_error_cksum) -> 18;
+usage_a2i(ad_kdcissued_cksum) -> 19;
+usage_a2i(ad_mte) -> 20;
+usage_a2i(ad_ite) -> 21;
+usage_a2i(gss_acceptor_seal) -> 22;
+usage_a2i(gss_acceptor_sign) -> 23;
+usage_a2i(gss_initiator_seal) -> 24;
+usage_a2i(gss_initiator_sign) -> 25;
+usage_a2i(gss_new_checksum) -> 43;
+usage_a2i(Other) -> error({bad_usage, Other}).
+
+-spec ms_usage_a2i(usage()) -> integer().
+ms_usage_a2i(as_req_pa_enc_ts) -> 1;
+ms_usage_a2i(kdc_rep_ticket) -> 2;
+ms_usage_a2i(as_rep_encpart) -> 8;
+ms_usage_a2i(tgs_req_ad_sesskey) -> 4;
+ms_usage_a2i(tgs_req_ad_subkey) -> 5;
+ms_usage_a2i(tgs_req_auth_cksum) -> 6;
+ms_usage_a2i(tgs_req_auth) -> 7;
+ms_usage_a2i(tgs_rep_encpart_sesskey) -> 8;
+ms_usage_a2i(tgs_rep_encpart_subkey) -> 9;
+ms_usage_a2i(ap_req_auth_cksum) -> 10;
+ms_usage_a2i(ap_req_auth) -> 11;
+ms_usage_a2i(ap_rep_encpart) -> 12;
+ms_usage_a2i(krb_priv_encpart) -> 13;
+ms_usage_a2i(krb_cred_encpart) -> 14;
+ms_usage_a2i(krb_safe_cksum) -> 15;
+ms_usage_a2i(app_data_cksum) -> 0;
+ms_usage_a2i(app_data_encrypt) -> 0;
+ms_usage_a2i(gss_acceptor_seal) -> 0;
+ms_usage_a2i(gss_acceptor_sign) -> 0;
+ms_usage_a2i(gss_initiator_seal) -> 0;
+ms_usage_a2i(gss_initiator_sign) -> 0;
+ms_usage_a2i(Other) -> error({bad_usage, Other}).
+
 -include("krb_key_records.hrl").
 
 -opaque base_key() :: #krb_base_key{}.
 -opaque ck_key() :: #krb_ck_key{}.
 -type protocol_key() :: {Kc :: binary(), Ke :: binary(), Ki :: binary()}.
--type usage() :: integer().
 
 -spec default_etypes() -> [etype()].
 default_etypes() ->
@@ -117,6 +178,7 @@ ctype_to_atom(15) -> hmac_sha1_aes128;
 ctype_to_atom(16) -> hmac_sha1_aes256;
 ctype_to_atom(19) -> hmac_sha256_aes128;
 ctype_to_atom(20) -> hmac_sha384_aes256;
+ctype_to_atom(-138) -> hmac_md5;
 ctype_to_atom(N) -> error({unknown_ctype, N}).
 
 -spec atom_to_ctype(ctype()) -> integer().
@@ -129,6 +191,7 @@ atom_to_ctype(hmac_sha1_aes128) -> 15;
 atom_to_ctype(hmac_sha1_aes256) -> 16;
 atom_to_ctype(hmac_sha256_aes128) -> 19;
 atom_to_ctype(hmac_sha384_aes256) -> 20;
+atom_to_ctype(hmac_md5) -> -138;
 atom_to_ctype(A) -> error({unknown_ctype, A}).
 
 -spec ctype_for_etype(etype()) -> ctype().
@@ -140,6 +203,8 @@ ctype_for_etype(aes128_hmac_sha1) -> hmac_sha1_aes128;
 ctype_for_etype(aes256_hmac_sha1) -> hmac_sha1_aes256;
 ctype_for_etype(aes128_hmac_sha256) -> hmac_sha256_aes128;
 ctype_for_etype(aes256_hmac_sha384) -> hmac_sha384_aes256;
+ctype_for_etype(rc4_hmac) -> hmac_md5;
+ctype_for_etype(rc4_hmac_exp) -> hmac_md5;
 ctype_for_etype(E) -> error({no_ctype_for_etype, E}).
 
 -spec key_etype(base_key()) -> etype().
@@ -168,25 +233,30 @@ checksum(#krb_ck_key{ctype = crc32}, Data, _Opts) ->
 checksum(#krb_ck_key{ctype = md5}, Data, _Opts) ->
     crypto:hash(md5, Data);
 checksum(#krb_ck_key{ctype = hmac_sha1_aes128, key = Key}, Data, Opts) ->
-    Usage = maps:get(usage, Opts, 1),
+    Usage = usage_a2i(maps:get(usage, Opts, app_data_cksum)),
     {Kc, _Ke, _Ki} = base_key_to_triad(aes128_hmac_sha1, Key, Usage),
     crypto:macN(hmac, sha, Kc, Data, 12);
 checksum(#krb_ck_key{ctype = hmac_sha1_aes256, key = Key}, Data, Opts) ->
-    Usage = maps:get(usage, Opts, 1),
+    Usage = usage_a2i(maps:get(usage, Opts, app_data_cksum)),
     {Kc, _Ke, _Ki} = base_key_to_triad(aes256_hmac_sha1, Key, Usage),
     crypto:macN(hmac, sha, Kc, Data, 12);
 checksum(#krb_ck_key{ctype = hmac_sha1_des3_kd, key = Key}, Data, Opts) ->
-    Usage = maps:get(usage, Opts, 1),
+    Usage = usage_a2i(maps:get(usage, Opts, app_data_cksum)),
     {Kc, _Ke, _Ki} = base_key_to_triad(des3_sha1, Key, Usage),
     crypto:macN(hmac, sha, Kc, Data, 20);
 checksum(#krb_ck_key{ctype = hmac_sha256_aes128, key = Key}, Data, Opts) ->
-    Usage = maps:get(usage, Opts, 1),
+    Usage = usage_a2i(maps:get(usage, Opts, app_data_cksum)),
     {Kc, _Ke, _Ki} = base_key_to_triad(aes128_hmac_sha256, Key, Usage),
     crypto:macN(hmac, sha256, Kc, Data, 16);
 checksum(#krb_ck_key{ctype = hmac_sha384_aes256, key = Key}, Data, Opts) ->
-    Usage = maps:get(usage, Opts, 1),
+    Usage = usage_a2i(maps:get(usage, Opts, app_data_cksum)),
     {Kc, _Ke, _Ki} = base_key_to_triad(aes256_hmac_sha384, Key, Usage),
     crypto:macN(hmac, sha384, Kc, Data, 24);
+checksum(#krb_ck_key{ctype = hmac_md5, key = Key}, Data, Opts) ->
+    T = ms_usage_a2i(maps:get(usage, Opts, app_data_cksum)),
+    Ksign = crypto:mac(hmac, md5, Key, <<"signaturekey",0>>),
+    Tmp = crypto:hash(md5, [<<T:32/little>>, Data]),
+    crypto:mac(hmac, md5, Ksign, Tmp);
 checksum(#krb_ck_key{ctype = C}, _, _) -> error({unknown_ctype, C}).
 
 -spec encrypt(base_key(), binary()) -> binary().
@@ -271,7 +341,7 @@ one_time(des3_md5, Key, Data, Opts) ->
         macfun = {crypto, macN, [hmac, md5]},
         maclen = 16, blocklen = 8, padding = true
     },
-    Usage = maps:get(usage, Opts, 1),
+    Usage = usage_a2i(maps:get(usage, Opts, app_data_cksum)),
     Triad = base_key_to_triad(des3_md5, Key, Usage),
     IV = <<0:64>>,
     case Opts of
@@ -286,7 +356,7 @@ one_time(des3_sha1, Key, Data, Opts) ->
         macfun = {crypto, macN, [hmac, sha]},
         maclen = 20, blocklen = 8, padding = true
     },
-    Usage = maps:get(usage, Opts, 1),
+    Usage = usage_a2i(maps:get(usage, Opts, app_data_cksum)),
     Triad = base_key_to_triad(des3_sha1, Key, Usage),
     IV = <<0:64>>,
     case Opts of
@@ -301,7 +371,7 @@ one_time(aes128_hmac_sha1, Key, Data, Opts) ->
         macfun = {crypto, macN, [hmac, sha]},
         maclen = 12, blocklen = 16
     },
-    Usage = maps:get(usage, Opts, 1),
+    Usage = usage_a2i(maps:get(usage, Opts, app_data_cksum)),
     Triad = base_key_to_triad(aes128_hmac_sha1, Key, Usage),
     IV = <<0:128>>,
     case Opts of
@@ -316,7 +386,7 @@ one_time(aes256_hmac_sha1, Key, Data, Opts) ->
         macfun = {crypto, macN, [hmac, sha]},
         maclen = 12, blocklen = 16
     },
-    Usage = maps:get(usage, Opts, 1),
+    Usage = usage_a2i(maps:get(usage, Opts, app_data_cksum)),
     Triad = base_key_to_triad(aes256_hmac_sha1, Key, Usage),
     IV = <<0:128>>,
     case Opts of
@@ -331,7 +401,7 @@ one_time(aes128_hmac_sha256, Key, Data, Opts) ->
         macfun = {crypto, macN, [hmac, sha256]},
         maclen = 16, blocklen = 16
     },
-    Usage = maps:get(usage, Opts, 1),
+    Usage = usage_a2i(maps:get(usage, Opts, app_data_cksum)),
     Triad = base_key_to_triad(aes128_hmac_sha256, Key, Usage),
     IV = <<0:128>>,
     case Opts of
@@ -346,7 +416,7 @@ one_time(aes256_hmac_sha384, Key, Data, Opts) ->
         macfun = {crypto, macN, [hmac, sha384]},
         maclen = 24, blocklen = 16
     },
-    Usage = maps:get(usage, Opts, 1),
+    Usage = usage_a2i(maps:get(usage, Opts, app_data_cksum)),
     Triad = base_key_to_triad(aes256_hmac_sha384, Key, Usage),
     IV = <<0:128>>,
     case Opts of
@@ -356,30 +426,27 @@ one_time(aes256_hmac_sha384, Key, Data, Opts) ->
             de_encrypt_then_mac(Triad, IV, Data, Spec)
     end;
 one_time(rc4_hmac, Key, Data, Opts = #{encrypt := true}) ->
-    T = ms_usage_map(maps:get(usage, Opts, 1)),
+    T = ms_usage_a2i(maps:get(usage, Opts, app_data_cksum)),
     K1 = crypto:mac(hmac, md5, Key, <<T:32/little>>),
     K2 = K1,
     Confounder = crypto:strong_rand_bytes(8),
-    PreMAC = <<Confounder/binary, Data/binary>>,
-    MAC = crypto:mac(hmac, md5, K2, PreMAC),
+    MAC = crypto:mac(hmac, md5, K2, [Confounder, Data]),
     K3 = crypto:mac(hmac, md5, K1, MAC),
-    State = crypto:crypto_init(rc4, K3, true),
-    ConfEnc = crypto:crypto_update(State, Confounder),
-    DataEnc = crypto:crypto_update(State, Data),
-    <<>> = crypto:crypto_final(State),
-    <<MAC/binary, ConfEnc/binary, DataEnc/binary>>;
+    EncPart = crypto:crypto_one_time(rc4, K3, [Confounder, Data], true),
+    iolist_to_binary([MAC, EncPart]);
 one_time(rc4_hmac, Key, Data, Opts = #{encrypt := false}) ->
-    T = ms_usage_map(maps:get(usage, Opts, 1)),
+    T = ms_usage_a2i(maps:get(usage, Opts, app_data_cksum)),
     K1 = crypto:mac(hmac, md5, Key, <<T:32/little>>),
     K2 = K1,
-    <<MAC:16/binary, ConfEnc:16/binary, DataEnc/binary>> = Data,
+    <<MAC:16/binary, EncPart/binary>> = Data,
     K3 = crypto:mac(hmac, md5, K1, MAC),
-    State = crypto:crypto_init(rc4, K3, false),
-    Confounder = crypto:crypto_update(State, ConfEnc),
-    Plain = crypto:crypto_update(State, DataEnc),
-    <<>> = crypto:crypto_final(State),
-    PreMAC = <<Confounder/binary, Plain/binary>>,
-    MAC = crypto:mac(hmac, md5, K2, PreMAC),
+    PlainPart = crypto:crypto_one_time(rc4, K3, EncPart, false),
+    <<Confounder:16/binary, Plain/binary>> = PlainPart,
+    OurMAC = crypto:mac(hmac, md5, K2, [Confounder, Plain]),
+    if
+        (OurMAC =:= MAC) -> ok;
+        true -> error({bad_mac, OurMAC, MAC})
+    end,
     Plain;
 one_time(E, _, _, _) -> error({unknown_etype, E}).
 
@@ -535,10 +602,6 @@ dk(Cipher, BaseKey, Constant) ->
 to_56bstr(B) ->
     << <<Low:7>> || <<_:1,Low:7>> <= B >>.
 
-ms_usage_map(3) -> 8;
-ms_usage_map(9) -> 8;
-ms_usage_map(N) -> N.
-
 des_add_parity(B) ->
     << <<N:7,(odd_parity(N)):1>> || <<N:7>> <= B >>.
 des_fix_parity(B) ->
@@ -647,6 +710,9 @@ random_to_key(aes128_hmac_sha256, Data) ->
 random_to_key(aes256_hmac_sha384, Data) ->
 	<<Key:256/bitstring, _/binary>> = Data,
     #krb_base_key{etype = aes256_hmac_sha384, key = Key};
+random_to_key(rc4_hmac, Data) ->
+    <<Key:128/bitstring, _/binary>> = Data,
+    #krb_base_key{etype = rc4_hmac, key = Key};
 random_to_key(E, _) -> error({unknown_etype, E}).
 
 aes_kdf(Hash, Key, Label, K) ->
