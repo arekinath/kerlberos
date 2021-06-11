@@ -68,19 +68,21 @@
 -record(?MODULE, {
     party :: initiator | acceptor,
     continue :: undefined | initiate,
-    them :: {realm(), #'PrincipalName'{}},
-    us :: {realm(), #'PrincipalName'{}},
+    them :: undefined | {realm(), #'PrincipalName'{}},
+    us :: undefined | {realm(), #'PrincipalName'{}},
     opts :: options(),
-    nonce :: undefined | binary(),
+    nonce :: undefined | integer(),
     tktkey :: undefined | krb_crypto:base_key(),
     ikey :: undefined | krb_crypto:base_key(),
     ackey :: undefined | krb_crypto:base_key(),
-    seq :: integer(),
-    rseq :: integer()
+    seq :: undefined | integer(),
+    rseq :: undefined | integer()
     }).
 
-local_name(#?MODULE{us = Us}) -> Us.
-peer_name(#?MODULE{them = Them}) -> Them.
+local_name(#?MODULE{us = undefined}) -> {error, not_yet_available};
+local_name(#?MODULE{us = Us}) -> {ok, Us}.
+peer_name(#?MODULE{them = undefined}) -> {error, not_yet_available};
+peer_name(#?MODULE{them = Them}) -> {ok, Them}.
 
 translate_name({_R, #'PrincipalName'{'name-type' = 1,
                                      'name-string' = [Username]}},

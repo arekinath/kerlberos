@@ -91,6 +91,8 @@ make_error(Realm, Service, Code) ->
     key => krb_crypto:base_key(),
     ticket => #'Ticket'{}}.
 
+-type reply() :: #'KDC-REP'{'enc-part' :: #'EncKDCRepPart'{}}.
+
 -spec ticket_from_rep([string()], reply()) -> ticket().
 ticket_from_rep(Princ, #'KDC-REP'{ticket = T, 'enc-part' = EP = #'EncKDCRepPart'{}}) ->
     #'EncKDCRepPart'{key = Key, flags = Flags, authtime = AuthTime,
@@ -226,9 +228,6 @@ post_decode(#'EncryptionKey'{keytype = ETI, keyvalue = KV}) when is_integer(ETI)
     #krb_base_key{etype = ET, key = KV};
 post_decode(S) -> S.
 
--type encrypted_reply() :: #'KDC-REP'{'enc-part' :: #'EncryptedData'{}}.
--type reply() :: #'KDC-REP'{'enc-part' :: #'EncKDCRepPart'{}}.
-
 find_key(ET, [#{key := K = #krb_base_key{etype = ET}} | _]) -> K;
 find_key(ET, [K = #krb_base_key{etype = ET} | _]) -> K;
 find_key(ET, K = #krb_base_key{etype = ET}) -> K;
@@ -240,7 +239,7 @@ find_key(ET, Ks) -> no_key_found.
     [krb_crypto:base_key()] |
     [mit_keytab:keytab_entry()].
 
--spec decrypt(keyset(), krb_crypto:usage(), encrypted_reply()) -> {ok, reply()} | {error, term()}.
+-spec decrypt(keyset(), krb_crypto:usage(), encrypted()) -> {ok, decrypted()} | {error, term()}.
 decrypt(Ks, Usage, EP = #'EncryptedData'{etype = EType, cipher = CT}) ->
     case find_key(EType, Ks) of
         no_key_found ->
@@ -311,10 +310,20 @@ inner_decode(Type, Bin) ->
             error({bad_inner_data, Type})
     end.
 
--type request() :: #'AP-REQ'{authenticator :: #'Authenticator'{}}.
--type encrypted_request() :: #'AP-REQ'{authenticator :: #'EncryptedData'{}}.
+-type encrypted() ::
+    #'EncryptedData'{} |
+    #'KDC-REP'{'enc-part' :: #'EncryptedData'{}} |
+    #'AP-REP'{'enc-part' :: #'EncryptedData'{}} |
+    #'AP-REQ'{'authenticator' :: #'EncryptedData'{}} |
+    #'Ticket'{'enc-part' :: #'EncryptedData'{}}.
+-type decrypted() ::
+    binary() |
+    #'KDC-REP'{'enc-part' :: #'EncKDCRepPart'{}} |
+    #'AP-REP'{'enc-part' :: #'EncAPRepPart'{}} |
+    #'AP-REQ'{'authenticator' :: #'Authenticator'{}} |
+    #'Ticket'{'enc-part' :: #'EncTicketPart'{}}.
 
--spec encrypt(krb_crypto:base_key(), krb_crypto:usage(), request()) -> encrypted_request().
+-spec encrypt(krb_crypto:base_key(), krb_crypto:usage(), decrypted()) -> encrypted().
 encrypt(K, Usage, R0 = #'AP-REQ'{authenticator = A}) ->
     #krb_base_key{etype = EType} = K,
     {ok, Plaintext} = encode('Authenticator', A),
@@ -334,7 +343,7 @@ encrypt(K, Usage, R0 = #'AP-REP'{'enc-part' = #'EncAPRepPart'{} = EP}) ->
     },
     R0#'AP-REP'{'enc-part' = ED}.
 
--spec checksum(krb_crypto:ck_key(), krb_crypto:usage(), term()) -> #'Checksum'{}.
+-spec checksum(krb_crypto:ck_key(), krb_crypto:usage(), #'KDC-REQ-BODY'{} | binary()) -> #'Checksum'{}.
 checksum(CK, Usage, B = #'KDC-REQ-BODY'{}) ->
     #krb_ck_key{ctype = CType} = CK,
     {ok, Bin} = encode('KDC-REQ-BODY', B),
