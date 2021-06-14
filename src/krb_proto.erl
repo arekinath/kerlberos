@@ -281,7 +281,7 @@ decrypt(Ks, Usage, R0 = #'AP-REP'{'enc-part' = EP}) ->
 decrypt(Ks, Usage, R0 = #'AP-REQ'{'authenticator' = EP}) ->
     case decrypt(Ks, Usage, EP) of
         {ok, Plain} ->
-            case (catch inner_decode('Authenticator', Plain)) of
+            case (catch inner_decode_authenticator(Plain)) of
                 {'EXIT', Why} ->
                     {error, {inner_decode, Why}};
                 Inner ->
@@ -310,6 +310,74 @@ inner_decode(Type, Bin) ->
             post_decode(EncPart);
         _ ->
             error({bad_inner_data, Type})
+    end.
+
+inner_decode_authenticator(Bin) ->
+    case 'KRB5':decode('Authenticator', Bin) of
+        {ok, EncPart, Rem} when byte_size(Rem) < 8 ->
+            <<0:(bit_size(Rem))>> = Rem,
+            post_decode(EncPart);
+        _ ->
+            case Bin of
+                <<2,1,5,_/binary>> ->
+                    % authenticator vno without the app 2 seq tag
+                    % MS krb5 often produces this (and things being compatible
+                    % with it)
+                    % reconstruct the front part that's missing
+                    IntTagged = <<16#A0, 16#03, Bin/binary>>,
+                    % then the sequence tag to go on the very front
+                    Len = asn1_encode_length(byte_size(IntTagged)),
+                    WithSeq = <<16#30, Len/binary, IntTagged/binary>>,
+                    Len2 = asn1_encode_length(byte_size(WithSeq)),
+                    WithApp = <<16#62, Len2/binary, WithSeq/binary>>,
+                    case 'KRB5':decode('Authenticator', WithApp) of
+                        {ok, EncPart, Rem} when byte_size(Rem) < 8 ->
+                            <<0:(bit_size(Rem))>> = Rem,
+                            post_decode(EncPart);
+                        _ ->
+                            error({bad_inner_data, 'Authenticator'})
+                    end;
+                _ ->
+                    error({bad_inner_data, 'Authenticator'})
+            end
+    end.
+
+-spec inner_decode_tgs_or_as(binary()) -> #'EncKDCRepPart'{}.
+inner_decode_tgs_or_as(Bin) ->
+    case 'KRB5':decode('EncTGSRepPart', Bin) of
+        {ok, EncPart, Rem} when byte_size(Rem) < 8 ->
+            <<0:(bit_size(Rem))>> = Rem,
+            post_decode(EncPart);
+        _ ->
+            inner_decode_as(Bin)
+    end.
+
+inner_decode_as(Bin) ->
+    case 'KRB5':decode('EncASRepPart', Bin) of
+        {ok, EncPart, Rem} when byte_size(Rem) < 8 ->
+            <<0:(bit_size(Rem))>> = Rem,
+            post_decode(EncPart);
+
+        _ ->
+            % HACK ALERT
+            % microsoft's older krb5 implementations often chop off the front
+            % of the EncASRepPart. what you get is just its innards starting
+            % with an un-tagged EncryptionKey
+            {ok, #'EncryptionKey'{}, B} = 'KRB5':decode('EncryptionKey', Bin),
+
+            % reconstruct the front part that's missing -- first, the context
+            % #0 tag for EncryptionKey
+            LenBytes = asn1_encode_length(byte_size(Bin) - byte_size(B)),
+            All = <<1:1, 0:1, 1:1, 0:5, LenBytes/binary, Bin/binary>>,
+            % then the sequence tag to go on the very front
+            LenBytes2 = asn1_encode_length(byte_size(All)),
+            Plain2 = <<0:1, 0:1, 1:1, 16:5,
+                       LenBytes2/binary, All/binary>>,
+
+            % don't bother reconstructing the application tag for EncASRepPart,
+            % just decode it here as a plain EncKDCRepPart
+            {ok, EncPart, <<>>} = 'KRB5':decode('EncKDCRepPart', Plain2),
+            post_decode(EncPart)
     end.
 
 -type encrypted() ::
@@ -371,44 +439,6 @@ checksum(CK, Usage, Bin) when is_binary(Bin) ->
         cksumtype = krb_crypto:atom_to_ctype(CType),
         checksum = krb_crypto:checksum(CK, Bin, #{usage => Usage})
     }.
-
--spec inner_decode_tgs_or_as(binary()) -> #'EncKDCRepPart'{}.
-inner_decode_tgs_or_as(Bin) ->
-    case 'KRB5':decode('EncTGSRepPart', Bin) of
-        {ok, EncPart, Rem} when byte_size(Rem) < 8 ->
-            <<0:(bit_size(Rem))>> = Rem,
-            post_decode(EncPart);
-        _ ->
-            inner_decode_as(Bin)
-    end.
-
-inner_decode_as(Bin) ->
-    case 'KRB5':decode('EncASRepPart', Bin) of
-        {ok, EncPart, Rem} when byte_size(Rem) < 8 ->
-            <<0:(bit_size(Rem))>> = Rem,
-            post_decode(EncPart);
-
-        _ ->
-            % HACK ALERT
-            % microsoft's older krb5 implementations often chop off the front
-            % of the EncASRepPart. what you get is just its innards starting
-            % with an un-tagged EncryptionKey
-            {ok, #'EncryptionKey'{}, B} = 'KRB5':decode('EncryptionKey', Bin),
-
-            % reconstruct the front part that's missing -- first, the context
-            % #0 tag for EncryptionKey
-            LenBytes = asn1_encode_length(byte_size(Bin) - byte_size(B)),
-            All = <<1:1, 0:1, 1:1, 0:5, LenBytes/binary, Bin/binary>>,
-            % then the sequence tag to go on the very front
-            LenBytes2 = asn1_encode_length(byte_size(All)),
-            Plain2 = <<0:1, 0:1, 1:1, 16:5,
-                       LenBytes2/binary, All/binary>>,
-
-            % don't bother reconstructing the application tag for EncASRepPart,
-            % just decode it here as a plain EncKDCRepPart
-            {ok, EncPart, <<>>} = 'KRB5':decode('EncKDCRepPart', Plain2),
-            post_decode(EncPart)
-    end.
 
 asn1_encode_length(L) when L =< 127 ->
     <<L>>;

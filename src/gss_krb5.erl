@@ -616,6 +616,8 @@ accept_req(APReq0, S0 = #?MODULE{opts = C}) ->
                                         'KRB_AP_ERR_BAD_INTEGRITY', S0);
 
                                 {error, Why} ->
+                                    lager:debug("decrypt of ap-req failed: ~p",
+                                        [Why]),
                                     init_generic_error(Realm, Service, Why, S0)
                             end
                     end;
@@ -628,6 +630,7 @@ accept_req(APReq0, S0 = #?MODULE{opts = C}) ->
                     init_error(Realm, Service, 'KRB_AP_ERR_BAD_INTEGRITY', S0);
 
                 {error, Why} ->
+                    lager:debug("decrypt of ticket failed: ~p", [Why]),
                     init_generic_error(Realm, Service, Why, S0)
 
             end;
