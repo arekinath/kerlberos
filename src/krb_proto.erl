@@ -178,6 +178,8 @@ decode(Data, [NextType | Rest]) ->
             decode(Data, Rest)
     end.
 
+post_decode(A = #'Authenticator'{subkey = K = #'EncryptionKey'{}}) ->
+    post_decode(A#'Authenticator'{subkey = post_decode(K)});
 post_decode(T = #'Ticket'{'enc-part' = EP}) ->
     T#'Ticket'{'enc-part' = post_decode(EP)};
 post_decode(T = #'EncTicketPart'{flags = F0, key = K0}) when is_bitstring(F0) ->

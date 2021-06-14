@@ -44,6 +44,8 @@
     key_ctype/1,
     random_to_key/1]).
 
+-export([base_key_to_triad/2]).
+
 -export([crc/1, crc/2, crc_unkey/3, hash_unkey/4]).
 
 -export_type([
@@ -66,7 +68,8 @@
     krb_cred_encpart | krb_safe_cksum | app_data_encrypt | app_data_cksum |
     krb_error_cksum | ad_kdcissued_cksum | ad_mte | ad_ite |
     gss_acceptor_seal | gss_acceptor_sign | gss_initiator_seal |
-    gss_initiator_sign | gss_new_checksum.
+    gss_initiator_sign | gss_new_checksum | gss_3des_seal | gss_3des_sign |
+    gss_3des_seq.
 
 -spec usage_a2i(usage()) -> integer().
 usage_a2i(as_req_pa_enc_ts) -> 1;
@@ -94,6 +97,9 @@ usage_a2i(gss_acceptor_seal) -> 22;
 usage_a2i(gss_acceptor_sign) -> 23;
 usage_a2i(gss_initiator_seal) -> 24;
 usage_a2i(gss_initiator_sign) -> 25;
+usage_a2i(gss_des3_seal) -> 22;
+usage_a2i(gss_des3_sign) -> 23;
+usage_a2i(gss_des3_seq) -> 24;
 usage_a2i(gss_new_checksum) -> 43;
 usage_a2i(Other) -> error({bad_usage, Other}).
 
@@ -534,6 +540,10 @@ de_encrypt_then_mac({_Kc, Ke, Ki}, IV, Data, Spec = #cryptspec{}) ->
     PreMAC = erlang:apply(EncMod, EncFun, EncArgs ++ [Ke, IV, Enc, false]),
     <<_Confounder:BlockSize/binary, Plain/binary>> = PreMAC,
     Plain.
+
+-spec base_key_to_triad(base_key(), usage()) -> protocol_key().
+base_key_to_triad(#krb_base_key{etype = ET, key = K}, U) ->
+    base_key_to_triad(ET, K, usage_a2i(U)).
 
 -spec base_key_to_triad(etype(), binary(), integer()) -> protocol_key().
 base_key_to_triad(aes128_hmac_sha256, BaseKey, Usage) ->

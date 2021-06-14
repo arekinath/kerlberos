@@ -107,30 +107,42 @@ translate_name(_Name, _Oid) ->
 sig_alg_a2i(des_mac_md5) -> 16#0000;
 sig_alg_a2i(md25) -> 16#0100;
 sig_alg_a2i(des_mac) -> 16#0200;
+sig_alg_a2i(hmac_md5_rc4) -> 16#1100;
+sig_alg_a2i(hmac_sha1_des3) -> 16#0400;
 sig_alg_a2i(Other) -> error({bad_sig_alg, Other}).
 
 sig_alg_i2a(16#0000) -> des_mac_md5;
 sig_alg_i2a(16#0100) -> md25;
 sig_alg_i2a(16#0200) -> des_mac;
+sig_alg_i2a(16#1100) -> hmac_md5_rc4;
+sig_alg_i2a(16#0400) -> hmac_sha1_des3;
 sig_alg_i2a(Other) -> error({bad_sig_alg, Other}).
 
 seal_alg_i2a(16#ffff) -> none;
 seal_alg_i2a(16#0000) -> des;
+seal_alg_i2a(16#1000) -> rc4;
+seal_alg_i2a(16#0200) -> des3;
 seal_alg_i2a(Other) -> error({bad_seal_alg, Other}).
 
 seal_alg_a2i(none) -> 16#ffff;
 seal_alg_a2i(des) -> 16#0000;
+seal_alg_a2i(rc4) -> 16#1000;
+seal_alg_a2i(des3) -> 16#0200;
 seal_alg_a2i(Other) -> error({bad_seal_alg, Other}).
 
 -record(mic_token_v1, {
     sig_alg :: sig_alg(),
-    seq_no_enc :: binary(),
+    seq_enc :: binary(),
+    seq :: undefined | integer(),
+    sender :: undefined | acceptor | initiator,
     checksum :: binary()
     }).
 -record(wrap_token_v1, {
     sig_alg :: sig_alg(),
     seal_alg :: seal_alg(),
-    seq_no_enc :: binary(),
+    seq_enc :: binary(),
+    seq :: undefined | integer(),
+    sender :: undefined | acceptor | initiator,
     checksum :: binary(),
     data :: binary()
     }).
@@ -160,30 +172,49 @@ decode_token(<<2, 0, APRepBin/binary>>) ->
 decode_token(<<3, 0, ErrBin/binary>>) ->
     {ok, Err} = krb_proto:decode(ErrBin, ['KRB-ERROR']),
     Err;
-decode_token(<<1, 1, SgnAlg:16/big, _Filler:4/binary, SeqNoEnc:8/binary,
-               Checksum:8/binary>>) ->
-    #mic_token_v1{sig_alg = sig_alg_i2a(SgnAlg),
-                  seq_no_enc = SeqNoEnc,
+decode_token(<<1, 1, SigAlgI:16/big, 16#FFFFFFFF:32, SeqNoEnc:8/binary,
+               Rem/binary>>) ->
+    SigAlg = sig_alg_i2a(SigAlgI),
+    ChecksumLen = case SigAlg of
+        hmac_sha1_des3 -> 20;
+        _ -> 8
+    end,
+    <<Checksum:ChecksumLen/binary>> = Rem,
+    #mic_token_v1{sig_alg = SigAlg,
+                  seq_enc = SeqNoEnc,
                   checksum = Checksum};
-decode_token(<<2, 1, SgnAlg:16/big, SealAlg:16/big, _Filler:2/binary,
-               SeqNoEnc:8/binary, Checksum:8/binary, Data/binary>>) ->
-    #wrap_token_v1{sig_alg = sig_alg_i2a(SgnAlg),
-                   seal_alg = seal_alg_i2a(SealAlg),
-                   seq_no_enc = SeqNoEnc,
+decode_token(<<2, 1, SigAlgI:16/big, SealAlgI:16/big, 16#FFFF:16, Rem/binary>>) ->
+    SigAlg = sig_alg_i2a(SigAlgI),
+    SealAlg = seal_alg_i2a(SealAlgI),
+    ChecksumLen = case SigAlg of
+        hmac_sha1_des3 -> 20;
+        _ -> 8
+    end,
+    <<SeqNoEnc:8/binary, Checksum:ChecksumLen/binary, Data/binary>> = Rem,
+    #wrap_token_v1{sig_alg = SigAlg,
+                   seal_alg = SealAlg,
+                   seq_enc = SeqNoEnc,
                    checksum = Checksum,
                    data = Data};
-decode_token(<<4, 4, Flags:8/bitstring, _Filler:5/binary, Seq:64/big,
+decode_token(<<4, 4, Flags:8/bitstring, 16#FFFFFFFFFF:40, Seq:64/big,
                Checksum/binary>>) ->
     #mic_token_v2{flags = decode_bit_flags(Flags, ?tok_flags),
                   seq = Seq,
                   checksum = Checksum};
-decode_token(<<5, 4, Flags:8/bitstring, _Filler, EC:16/big, RRC:16/big,
+decode_token(<<5, 4, Flags:8/bitstring, 16#FF, EC:16/big, RRC:16/big,
                Seq:64/big, Data/binary>>) ->
     #wrap_token_v2{flags = decode_bit_flags(Flags, ?tok_flags),
                    seq = Seq,
                    ec = EC,
                    rrc = RRC,
-                   edata = Data}.
+                   edata = Data};
+decode_token(Token) ->
+    case (catch gss_token:decode_initial(Token)) of
+        {?'id-mech-krb5', MechData, <<>>} ->
+            decode_token(MechData);
+        _ ->
+            error({invalid_token, Token})
+    end.
 
 encode_token(APReq = #'AP-REQ'{}) ->
     {ok, APReqBin} = krb_proto:encode('AP-REQ', APReq),
@@ -194,17 +225,13 @@ encode_token(APRep = #'AP-REP'{}) ->
 encode_token(Err = #'KRB-ERROR'{}) ->
     {ok, ErrBin} = krb_proto:encode('KRB-ERROR', Err),
     <<3, 0, ErrBin/binary>>;
-encode_token(#mic_token_v1{sig_alg = SgnAlg, seq_no_enc = SeqNoEnc,
+encode_token(#mic_token_v1{sig_alg = SgnAlg, seq_enc = SeqNoEnc,
                            checksum = Checksum}) ->
-    8 = byte_size(SeqNoEnc),
-    8 = byte_size(Checksum),
     <<1, 1, (sig_alg_a2i(SgnAlg)):16/big, 16#FFFFFFFF:32/big, SeqNoEnc/binary,
       Checksum/binary>>;
 encode_token(#wrap_token_v1{sig_alg = SgnAlg, seal_alg = SealAlg,
-                            seq_no_enc = SeqNoEnc, checksum = Checksum,
+                            seq_enc = SeqNoEnc, checksum = Checksum,
                             data = Data}) ->
-    8 = byte_size(SeqNoEnc),
-    8 = byte_size(Checksum),
     <<2, 1, (sig_alg_a2i(SgnAlg)):16/big, (seal_alg_a2i(SealAlg)):16/big,
       16#FFFF:16/big, SeqNoEnc/binary, Checksum/binary, Data/binary>>;
 encode_token(#mic_token_v2{flags = FlagSet, seq = Seq, checksum = Checksum}) ->
@@ -266,6 +293,116 @@ decrypt_wrap_token(Key, Usage, T = #wrap_token_v2{edata = Enc, ec = EC,
     <<Data:DataLen/binary, 0:EC/unit:8, Header/binary>> = Dec1,
     Data.
 
+des_pad_block(B) ->
+    PadLen = 8 - (byte_size(B) rem 8),
+    Padding = binary:copy(<<PadLen:8>>, PadLen),
+    <<B/binary, Padding/binary>>.
+
+des_unpad_block(B) ->
+    PadLen = binary:at(B, byte_size(B) - 1),
+    DataLen = byte_size(B) - PadLen,
+    Padding = binary:copy(<<PadLen:8>>, PadLen),
+    <<Data:DataLen/binary, Padding/binary>> = B,
+    Data.
+
+-include("krb_key_records.hrl").
+
+checksum_v1_mic_token(Key, Sender, Seq, Data) ->
+    T0 = #mic_token_v1{sig_alg = hmac_sha1_des3, seq_enc = <<>>,
+                       checksum = <<>>},
+    Token = encode_token(T0),
+    ToMAC = iolist_to_binary([binary:part(Token, 0, 8), Data]),
+    {Kc, _Ke, _Ki} = krb_crypto:base_key_to_triad(Key, gss_des3_sign),
+    Checksum = crypto:macN(hmac, sha, Kc, ToMAC, 20),
+    SeqIV = binary:part(Checksum, 0, 8),
+    Dirn = case Sender of
+        acceptor -> <<16#FFFFFFFF:32>>;
+        initiator -> <<0:32>>
+    end,
+    SeqNoPlain = <<Seq:32/little, Dirn/binary>>,
+    #krb_base_key{etype = des3_sha1, key = SeqKe} = Key,
+    SeqNoEnc = crypto:crypto_one_time(des_ede3_cbc, SeqKe, SeqIV, SeqNoPlain,
+        true),
+    T0#mic_token_v1{checksum = Checksum, seq_enc = SeqNoEnc}.
+
+verify_v1_mic_token(Key, T = #mic_token_v1{sig_alg = hmac_sha1_des3}, Data) ->
+    #mic_token_v1{seq_enc = SeqNoEnc, checksum = Checksum} = T,
+    #krb_base_key{etype = des3_sha1, key = SeqKe} = Key,
+    SeqIV = binary:part(Checksum, 0, 8),
+    SeqNoPlain = crypto:crypto_one_time(des_ede3_cbc, SeqKe, SeqIV, SeqNoEnc,
+        false),
+    <<Seq:32/little, Dirn:4/binary>> = SeqNoPlain,
+    Sender = case Dirn of
+        <<16#FFFFFFFF:32>> -> acceptor;
+        <<0:32>> -> initiator
+    end,
+    Token = encode_token(T),
+    ToMAC = iolist_to_binary([binary:part(Token, 0, 8), Data]),
+    {Kc, _Ke, _Ki} = krb_crypto:base_key_to_triad(Key, gss_des3_sign),
+    OurChecksum = crypto:macN(hmac, sha, Kc, ToMAC, 20),
+    if
+        OurChecksum =:= Checksum -> ok;
+        true -> error({bad_checksum, Checksum, OurChecksum})
+    end,
+    T#mic_token_v1{seq = Seq, sender = Sender}.
+
+decrypt_v1_wrap_token(Key, T = #wrap_token_v1{seal_alg = des3,
+                                              sig_alg = hmac_sha1_des3}) ->
+    % Ok, this one is awful. There's a spec around,
+    % draft-raeburn-krb-gssapi-krb5-3des-01, which is *almost* what MIT KRB5
+    % does, but not quite. Honestly the only real reference for how this
+    % type works is looking at the MIT KRB5 code.
+    #wrap_token_v1{seq_enc = SeqNoEnc, checksum = Checksum,
+                   data = DataEnc} = T,
+    % The spec says this uses KD, but it doesn't for the seq *or* for the wrap
+    % token contents (it only uses KD for the checksum)
+    #krb_base_key{etype = des3_sha1, key = SeqKe} = Key,
+    SeqIV = binary:part(Checksum, 0, 8),
+    SeqNoPlain = crypto:crypto_one_time(des_ede3_cbc, SeqKe, SeqIV, SeqNoEnc,
+        false),
+    <<Seq:32/little, Dirn:4/binary>> = SeqNoPlain,
+    Sender = case Dirn of
+        <<16#FFFFFFFF:32>> -> acceptor;
+        <<0:32>> -> initiator
+    end,
+    IV = <<0:64/big>>,
+    ConfDataPad = crypto:crypto_one_time(des_ede3_cbc, SeqKe, IV, DataEnc,
+        false),
+    <<_Confounder:8/binary, DataPad/binary>> = ConfDataPad,
+    Token = encode_token(T),
+    ToMAC = iolist_to_binary([binary:part(Token, 0, 8), ConfDataPad]),
+    {Kc, _Ke, _Ki} = krb_crypto:base_key_to_triad(Key, gss_des3_sign),
+    OurChecksum = crypto:macN(hmac, sha, Kc, ToMAC, 20),
+    if
+        OurChecksum =:= Checksum -> ok;
+        true -> error({bad_mac, Checksum, OurChecksum})
+    end,
+    Data = des_unpad_block(DataPad),
+    T#wrap_token_v1{seq = Seq, sender = Sender, data = Data}.
+
+encrypt_v1_wrap_token(Key, Sender, Seq, Data) ->
+    #krb_base_key{etype = des3_sha1, key = SeqKe} = Key,
+    Confounder = crypto:strong_rand_bytes(8),
+    DataPad = des_pad_block(Data),
+    ConfDataPad = <<Confounder/binary, DataPad/binary>>,
+    IV = <<0:64>>,
+    Enc = crypto:crypto_one_time(des_ede3_cbc, SeqKe, IV, ConfDataPad, true),
+    T0 = #wrap_token_v1{seal_alg = des3, sig_alg = hmac_sha1_des3,
+                        data = Enc, seq_enc = <<>>, checksum = <<>>},
+    Token = encode_token(T0),
+    ToMAC = iolist_to_binary([binary:part(Token, 0, 8), ConfDataPad]),
+    {Kc, _Ke, _Ki} = krb_crypto:base_key_to_triad(Key, gss_des3_sign),
+    Checksum = crypto:macN(hmac, sha, Kc, ToMAC, 20),
+    SeqIV = binary:part(Checksum, 0, 8),
+    Dirn = case Sender of
+        acceptor -> <<16#FFFFFFFF:32>>;
+        initiator -> <<0:32>>
+    end,
+    SeqNoPlain = <<Seq:32/little, Dirn/binary>>,
+    SeqNoEnc = crypto:crypto_one_time(des_ede3_cbc, SeqKe, SeqIV, SeqNoPlain,
+        true),
+    T0#wrap_token_v1{checksum = Checksum, seq_enc = SeqNoEnc}.
+
 rotate_bytes(Bin, 0) ->
     Bin;
 rotate_bytes(Bin, N) ->
@@ -273,59 +410,40 @@ rotate_bytes(Bin, N) ->
     iolist_to_binary([binary:part(Bin, byte_size(Bin) - Take, Take),
                       binary:part(Bin, 0, byte_size(Bin) - Take)]).
 
+-define(cksum_flags, #{
+    delegate => {1, false},
+    mutual_auth => {2, false},
+    replay_detect => {4, false},
+    sequence => {8, true},
+    confidentiality => {16, true},
+    integrity => {32, true},
+    dce_style => {16#1000, false},
+    identify => {16#2000, false},
+    ext_errors => {16#4000, false}
+    }).
+
 encode_flags(C) ->
-    V0 = case C of
-        #{delegate := true} -> 1;
-        _ -> 0
-    end,
-    V1 = case C of
-        #{mutual_auth := true} -> V0 bor 2;
-        _ -> V0
-    end,
-    V2 = case C of
-        #{replay_detect := true} -> V1 bor 4;
-        _ -> V1
-    end,
-    V3 = case C of
-        #{sequence := false} -> V2;
-        _ -> V2 bor 8
-    end,
-    V4 = case C of
-        #{confidentiality := false} -> V3;
-        _ -> V3 bor 16
-    end,
-    V5 = case C of
-        #{integrity := false} -> V4;
-        _ -> V4 bor 32
-    end,
-    <<V5:32/little>>.
+    V = maps:fold(fun (Flag, {Mask, Default}, Acc) ->
+        case C of
+            #{Flag := false} ->
+                Acc;
+            #{Flag := true} ->
+                Acc bor Mask;
+            _ when Default ->
+                Acc bor Mask;
+            _ ->
+                Acc
+        end
+    end, 0, ?cksum_flags),
+    <<V:32/little>>.
 
 decode_flags(<<V:32/little>>) ->
-    M0 = if
-        (V band 32) > 0 -> #{integrity => true};
-        true -> #{integrity => false}
-    end,
-    M1 = if
-        (V band 16) > 0 -> M0#{confidentiality => true};
-        true -> M0#{confidentiality => false}
-    end,
-    M2 = if
-        (V band 8) > 0 -> M1#{sequence => true};
-        true -> M1#{sequence => false}
-    end,
-    M3 = if
-        (V band 4) > 0 -> M2#{replay_detect => true};
-        true -> M2#{replay_detect => false}
-    end,
-    M4 = if
-        (V band 2) > 0 -> M3#{mutual_auth => true};
-        true -> M3#{mutual_auth => false}
-    end,
-    _M5 = if
-        (V band 1) > 0 -> M4#{delegate => true};
-        true -> M4#{delegate => false}
-    end.
-
+    maps:fold(fun (Flag, {Mask, _Default}, Acc) ->
+        case (V band Mask) of
+            0 -> Acc;
+            Mask -> Acc#{Flag => true}
+        end
+    end, #{}, ?cksum_flags).
 
 initiate(C) ->
     #{chan_bindings := Bindings0, ticket := TicketInfo} = C,
@@ -716,24 +834,33 @@ get_mic(Message, S0 = #?MODULE{continue = undefined}) ->
              ackey = ACKey} = S0,
     Integ = maps:get(integrity, C, true),
     Integ = true,
-    Usage = case Party of
-        acceptor -> gss_acceptor_sign;
-        initiator -> gss_initiator_sign
-    end,
-    Flags0 = sets:new(),
-    Flags1 = case Party of
-        acceptor -> sets:add_element(sent_by_acceptor, Flags0);
-        _ -> Flags0
-    end,
-    {Key, Flags2} = case ACKey of
-        undefined -> {IKey, Flags1};
-        _ -> {ACKey, sets:add_element(acceptor_subkey, Flags1)}
-    end,
-    CKey = krb_crypto:base_key_to_ck_key(Key),
-    TokenRec = checksum_mic_token(CKey, Usage, Flags2, Seq0, Message),
-    Token = encode_token(TokenRec),
-    S1 = S0#?MODULE{seq = Seq0 + 1},
-    {ok, Token, S1}.
+    case krb_crypto:key_etype(IKey) of
+        K when (K =:= des3_md5) or (K =:= des3_sha1) ->
+            TokenRec = checksum_v1_mic_token(IKey, Party, Seq0, Message),
+            MechData = encode_token(TokenRec),
+            Token = gss_token:encode_initial(?'id-mech-krb5', MechData),
+            S1 = S0#?MODULE{seq = Seq0 + 1},
+            {ok, Token, S1};
+        _ ->
+            Usage = case Party of
+                acceptor -> gss_acceptor_sign;
+                initiator -> gss_initiator_sign
+            end,
+            Flags0 = sets:new(),
+            Flags1 = case Party of
+                acceptor -> sets:add_element(sent_by_acceptor, Flags0);
+                _ -> Flags0
+            end,
+            {Key, Flags2} = case ACKey of
+                undefined -> {IKey, Flags1};
+                _ -> {ACKey, sets:add_element(acceptor_subkey, Flags1)}
+            end,
+            CKey = krb_crypto:base_key_to_ck_key(Key),
+            TokenRec = checksum_mic_token(CKey, Usage, Flags2, Seq0, Message),
+            Token = encode_token(TokenRec),
+            S1 = S0#?MODULE{seq = Seq0 + 1},
+            {ok, Token, S1}
+    end.
 
 wrap(Message, S0 = #?MODULE{continue = undefined}) ->
     #?MODULE{opts = C, seq = Seq0, party = Party, ikey = IKey,
@@ -741,23 +868,32 @@ wrap(Message, S0 = #?MODULE{continue = undefined}) ->
     Conf = maps:get(confidentiality, C, true),
     Integ = maps:get(integrity, C, true),
     Conf = true, Integ = true,
-    Usage = case Party of
-        acceptor -> gss_acceptor_seal;
-        initiator -> gss_initiator_seal
-    end,
-    Flags0 = sets:from_list([sealed]),
-    Flags1 = case Party of
-        acceptor -> sets:add_element(sent_by_acceptor, Flags0);
-        _ -> Flags0
-    end,
-    {Key, Flags2} = case ACKey of
-        undefined -> {IKey, Flags1};
-        _ -> {ACKey, sets:add_element(acceptor_subkey, Flags1)}
-    end,
-    TokenRec = encrypt_wrap_token(Key, Usage, Flags2, Seq0, Message),
-    Token = encode_token(TokenRec),
-    S1 = S0#?MODULE{seq = Seq0 + 1},
-    {ok, Token, S1}.
+    case krb_crypto:key_etype(IKey) of
+        K when (K =:= des3_md5) or (K =:= des3_sha1) ->
+            TokenRec = encrypt_v1_wrap_token(IKey, Party, Seq0, Message),
+            MechData = encode_token(TokenRec),
+            Token = gss_token:encode_initial(?'id-mech-krb5', MechData),
+            S1 = S0#?MODULE{seq = Seq0 + 1},
+            {ok, Token, S1};
+        _ ->
+            Usage = case Party of
+                acceptor -> gss_acceptor_seal;
+                initiator -> gss_initiator_seal
+            end,
+            Flags0 = sets:from_list([sealed]),
+            Flags1 = case Party of
+                acceptor -> sets:add_element(sent_by_acceptor, Flags0);
+                _ -> Flags0
+            end,
+            {Key, Flags2} = case ACKey of
+                undefined -> {IKey, Flags1};
+                _ -> {ACKey, sets:add_element(acceptor_subkey, Flags1)}
+            end,
+            TokenRec = encrypt_wrap_token(Key, Usage, Flags2, Seq0, Message),
+            Token = encode_token(TokenRec),
+            S1 = S0#?MODULE{seq = Seq0 + 1},
+            {ok, Token, S1}
+    end.
 
 unwrap(Token, S0 = #?MODULE{continue = undefined}) ->
     #?MODULE{opts = C, ikey = IKey, ackey = ACKey, rseq = RSeq0,
@@ -786,8 +922,29 @@ unwrap(Token, S0 = #?MODULE{continue = undefined}) ->
             {error, duplicate_token, S0};
         #wrap_token_v2{seq = OtherSeq} when OtherSeq > RSeq0 ->
             {error, gap_token, S0};
-        #wrap_token_v1{} ->
-            {error, old_token, S0};
+        T0 = #wrap_token_v1{} ->
+            % v1 wrap tokens don't support acceptor keys, they always use
+            % an initiator key or the ticket key
+            Key = IKey,
+            Sender = case Party of
+                acceptor -> initiator;
+                initiator -> acceptor
+            end,
+            case (catch decrypt_v1_wrap_token(Key, T0)) of
+                {'EXIT', Reason} ->
+                    {error, {defective_token, Reason}, S0};
+                #wrap_token_v1{sender = Sender, seq = RSeq0, data = Message} ->
+                    S1 = S0#?MODULE{rseq = RSeq0 + 1},
+                    {ok, Message, S1};
+                #wrap_token_v1{sender = Sender, seq = BadSeq}
+                                                        when BadSeq < RSeq0 ->
+                    {error, duplicate_token, S0};
+                #wrap_token_v1{sender = Sender, seq = BadSeq}
+                                                        when BadSeq > RSeq0 ->
+                    {error, gap_token, S0};
+                #wrap_token_v1{} ->
+                    {error, {unseq_token, bad_direction}, S0}
+            end;
         _ ->
             {error, defective_token, S0}
     end.
@@ -819,8 +976,27 @@ verify_mic(Message, Token, S0 = #?MODULE{continue = undefined}) ->
             {error, duplicate_token, S0};
         #mic_token_v2{seq = OtherSeq} when OtherSeq > RSeq0 ->
             {error, gap_token, S0};
-        #mic_token_v1{} ->
-            {error, old_token, S0};
+        T0 = #mic_token_v1{} ->
+            Key = IKey,
+            Sender = case Party of
+                acceptor -> initiator;
+                initiator -> acceptor
+            end,
+            case (catch verify_v1_mic_token(Key, T0, Message)) of
+                {'EXIT', Reason} ->
+                    {error, {defective_token, Reason}, S0};
+                #mic_token_v1{sender = Sender, seq = RSeq0} ->
+                    S1 = S0#?MODULE{rseq = RSeq0 + 1},
+                    {ok, S1};
+                #mic_token_v1{sender = Sender, seq = BadSeq}
+                                                        when BadSeq < RSeq0 ->
+                    {error, duplicate_token, S0};
+                #mic_token_v1{sender = Sender, seq = BadSeq}
+                                                        when BadSeq > RSeq0 ->
+                    {error, gap_token, S0};
+                #mic_token_v1{} ->
+                    {error, {unseq_token, bad_direction}, S0}
+            end;
         _ ->
             {error, defective_token, S0}
     end.
