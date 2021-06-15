@@ -56,6 +56,10 @@
     make_error/3
     ]).
 
+% for internal use
+-export_type([flag/0, bit_flags/0]).
+-export([decode_bit_flags/2, encode_bit_flags/2]).
+
 make_generic_error(Realm, Service, Why) ->
     E0 = make_error(Realm, Service, 'KRB_ERR_GENERIC'),
     E0#'KRB-ERROR'{
@@ -504,6 +508,7 @@ datetime_to_krbtime({{Y, M, D}, {Hr, Min, Sec}}) ->
 system_time_to_krbtime(V, U) ->
     UT = calendar:system_time_to_universal_time(V, U),
     datetime_to_krbtime(UT).
+
 
 -type flag() :: atom().
 -type bit_flags() :: [skip | {skip, integer()} | flag()].

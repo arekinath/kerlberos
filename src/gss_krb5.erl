@@ -87,13 +87,13 @@ peer_name(#?MODULE{them = Them}) -> {ok, Them}.
 translate_name({_R, #'PrincipalName'{'name-type' = 1,
                                      'name-string' = [Username]}},
                 ?'id-user-name') ->
-    Username;
+    {ok, Username};
 translate_name({_R, #'PrincipalName'{'name-type' = 2,
                                      'name-string' = [Svc, Host]}},
                 ?'id-service-name') ->
-    lists:flatten([Svc, $@, Host]);
+    {ok, lists:flatten([Svc, $@, Host])};
 translate_name({R, #'PrincipalName'{'name-string' = Parts}}, ?'id-krb5-name') ->
-    lists:flatten([lists:join($/, Parts), $@, R]);
+    {ok, lists:flatten([lists:join($/, Parts), $@, R])};
 translate_name({_R, #'PrincipalName'{}}, _Oid) ->
     {error, bad_target_oid};
 translate_name(_Name, _Oid) ->
@@ -198,12 +198,12 @@ decode_token(<<2, 1, SigAlgI:16/big, SealAlgI:16/big, 16#FFFF:16, Rem/binary>>) 
                    data = Data};
 decode_token(<<4, 4, Flags:8/bitstring, 16#FFFFFFFFFF:40, Seq:64/big,
                Checksum/binary>>) ->
-    #mic_token_v2{flags = decode_bit_flags(Flags, ?tok_flags),
+    #mic_token_v2{flags = krb_proto:decode_bit_flags(Flags, ?tok_flags),
                   seq = Seq,
                   checksum = Checksum};
 decode_token(<<5, 4, Flags:8/bitstring, 16#FF, EC:16/big, RRC:16/big,
                Seq:64/big, Data/binary>>) ->
-    #wrap_token_v2{flags = decode_bit_flags(Flags, ?tok_flags),
+    #wrap_token_v2{flags = krb_proto:decode_bit_flags(Flags, ?tok_flags),
                    seq = Seq,
                    ec = EC,
                    rrc = RRC,
@@ -235,12 +235,12 @@ encode_token(#wrap_token_v1{sig_alg = SgnAlg, seal_alg = SealAlg,
     <<2, 1, (sig_alg_a2i(SgnAlg)):16/big, (seal_alg_a2i(SealAlg)):16/big,
       16#FFFF:16/big, SeqNoEnc/binary, Checksum/binary, Data/binary>>;
 encode_token(#mic_token_v2{flags = FlagSet, seq = Seq, checksum = Checksum}) ->
-    Flags = encode_bit_flags(FlagSet, ?tok_flags),
+    Flags = krb_proto:encode_bit_flags(FlagSet, ?tok_flags),
     <<4, 4, Flags/bitstring, 16#FFFFFFFFFF:40/big,
       Seq:64/big, Checksum/binary>>;
 encode_token(#wrap_token_v2{flags = FlagSet, seq = Seq, ec = EC, rrc = RRC,
                             edata = Data}) ->
-    Flags = encode_bit_flags(FlagSet, ?tok_flags),
+    Flags = krb_proto:encode_bit_flags(FlagSet, ?tok_flags),
     <<5, 4, Flags/bitstring, 16#FF, EC:16/big, RRC:16/big, Seq:64/big,
       Data/binary>>.
 
@@ -1002,48 +1002,4 @@ verify_mic(Message, Token, S0 = #?MODULE{continue = undefined}) ->
             end;
         _ ->
             {error, defective_token, S0}
-    end.
-
--type flag() :: atom().
--type bit_flags() :: [skip | {skip, integer()} | flag()].
-
--spec decode_bit_flags(bitstring(), bit_flags()) -> sets:set(flag()).
-decode_bit_flags(<<>>, _) -> sets:new();
-decode_bit_flags(Bits, [{skip,N} | RestAtoms]) ->
-    <<_Flags:N, Rest/bitstring>> = Bits,
-    decode_bit_flags(Rest, RestAtoms);
-decode_bit_flags(<<_Flag:1, Rest/bitstring>>, [skip | RestAtoms]) ->
-    decode_bit_flags(Rest, RestAtoms);
-decode_bit_flags(Bits, [{FlagAtom, Width} | RestAtoms]) ->
-    <<Flag:Width/little, Rest/bitstring>> = Bits,
-    case Flag of
-        0 -> decode_bit_flags(Rest, RestAtoms);
-        1 -> sets:add_element(FlagAtom, decode_bit_flags(Rest, RestAtoms));
-        N -> sets:add_element({FlagAtom, N}, decode_bit_flags(Rest, RestAtoms))
-    end;
-decode_bit_flags(<<Flag:1, Rest/bitstring>>, [FlagAtom | RestAtoms]) ->
-    case Flag of
-        1 -> sets:add_element(FlagAtom, decode_bit_flags(Rest, RestAtoms));
-        0 -> decode_bit_flags(Rest, RestAtoms)
-    end.
-
--spec encode_bit_flags(sets:set(flag()), bit_flags()) -> bitstring().
-encode_bit_flags(_FlagSet, []) -> <<>>;
-encode_bit_flags(FlagSet, [{skip, N} | RestAtoms]) ->
-    RestBin = encode_bit_flags(FlagSet, RestAtoms),
-    <<0:N, RestBin/bitstring>>;
-encode_bit_flags(FlagSet, [skip | RestAtoms]) ->
-    RestBin = encode_bit_flags(FlagSet, RestAtoms),
-    <<0:1, RestBin/bitstring>>;
-encode_bit_flags(FlagSet, [{FlagAtom, Width} | RestAtoms]) ->
-    RestBin = encode_bit_flags(FlagSet, RestAtoms),
-    case sets:is_element(FlagAtom, FlagSet) of
-        true -> <<1:Width/little, RestBin/bitstring>>;
-        false -> <<0:Width/little, RestBin/bitstring>>
-    end;
-encode_bit_flags(FlagSet, [FlagAtom | RestAtoms]) ->
-    RestBin = encode_bit_flags(FlagSet, RestAtoms),
-    case sets:is_element(FlagAtom, FlagSet) of
-        true -> <<1:1, RestBin/bitstring>>;
-        false -> <<0:1, RestBin/bitstring>>
     end.
