@@ -62,7 +62,7 @@
 -record(?MODULE, {
     party :: acceptor | initiator,
     state :: initial | running,
-    want_mic = true :: boolean(),
+    want_mic = false :: boolean(),
     config :: config(),
     mech :: oid(),
     mechmod :: module(),

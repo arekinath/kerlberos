@@ -528,11 +528,14 @@ initiate(C) ->
             {ok, Token, S0}
     end.
 
-filter_keytab(KeyTab, #'Ticket'{realm = Realm, sname = SvcName}) ->
+filter_keytab(KeyTab, #'Ticket'{realm = Realm, sname = SvcName,
+                                'enc-part' = EP}) ->
+    #'EncryptedData'{kvno = Version} = EP,
     #'PrincipalName'{'name-string' = Name} = SvcName,
     Matches = lists:filter(fun
-        (#{realm := KRealm, principal := KName}) when
-            (KRealm =:= Realm) and (KName =:= Name) -> true;
+        (#{realm := KRealm, principal := KName, version := KVersion}) when
+            (KRealm =:= Realm) and (KName =:= Name) and
+            (Version =:= KVersion) -> true;
         (_) -> false
     end, KeyTab),
     case Matches of
