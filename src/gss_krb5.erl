@@ -55,6 +55,9 @@
     translate_name/2
     ]).
 
+-export([
+    peer_ticket/1]).
+
 -type msec() :: integer().
 
 -type options() :: gss_mechanism:general_options() | #{
@@ -72,12 +75,16 @@
     us :: undefined | {realm(), #'PrincipalName'{}},
     opts :: options(),
     nonce :: undefined | integer(),
+    tkt :: undefined | #'Ticket'{},
     tktkey :: undefined | krb_crypto:base_key(),
     ikey :: undefined | krb_crypto:base_key(),
     ackey :: undefined | krb_crypto:base_key(),
     seq :: undefined | integer(),
     rseq :: undefined | integer()
     }).
+
+peer_ticket(#?MODULE{tkt = undefined}) -> {error, not_yet_available};
+peer_ticket(S0 = #?MODULE{tkt = Ticket}) -> {ok, Ticket, S0}.
 
 local_name(#?MODULE{us = undefined}) -> {error, not_yet_available};
 local_name(#?MODULE{us = Us}) -> {ok, Us}.
@@ -479,7 +486,7 @@ initiate(C) ->
     end,
     CKey = krb_crypto:base_key_to_ck_key(Key),
     CksumData2 = case krb_crypto:key_ctype(CKey) of
-        md5 ->
+        CT when (CT =:= crc) or (CT =:= md5) or (CT =:= hmac_md5) ->
             CksumData1;
         _ ->
             KrbMic = krb_crypto:checksum(CKey, Bindings1,
@@ -589,6 +596,7 @@ accept_req(APReq0, S0 = #?MODULE{opts = C}) ->
         {ok, KeySet} ->
             case krb_proto:decrypt(KeySet, kdc_rep_ticket, Ticket0) of
                 {ok, Ticket1} ->
+                    S1 = S0#?MODULE{tkt = Ticket1},
                     #'Ticket'{'enc-part' = ETP} = Ticket1,
                     #'EncTicketPart'{key = TktKey,
                                      crealm = CRealm,
@@ -602,7 +610,7 @@ accept_req(APReq0, S0 = #?MODULE{opts = C}) ->
                             lager:debug("client presented expired ticket: "
                                 "now = ~p, end = ~p", [NowKrb, EndTime]),
                             init_error(Realm, Service,
-                                'KRB_AP_ERR_TKT_EXPIRED', S0);
+                                'KRB_AP_ERR_TKT_EXPIRED', S1);
 
                         true ->
                             Us = {Realm, SName},
@@ -610,18 +618,18 @@ accept_req(APReq0, S0 = #?MODULE{opts = C}) ->
                             case krb_proto:decrypt(TktKey, ap_req_auth, APReq0) of
                                 {ok, APReq1 = #'AP-REQ'{}} ->
                                     #'AP-REQ'{authenticator = A} = APReq1,
-                                    S1 = S0#?MODULE{us = Us, them = Them,
+                                    S2 = S1#?MODULE{us = Us, them = Them,
                                         tktkey = TktKey},
-                                    accept_auth(A, S1);
+                                    accept_auth(A, S2);
 
                                 {error, {bad_mac, _OurMAC, _TheirMAC}} ->
                                     init_error(Realm, Service,
-                                        'KRB_AP_ERR_BAD_INTEGRITY', S0);
+                                        'KRB_AP_ERR_BAD_INTEGRITY', S1);
 
                                 {error, Why} ->
                                     lager:debug("decrypt of ap-req failed: ~p",
                                         [Why]),
-                                    init_generic_error(Realm, Service, Why, S0)
+                                    init_generic_error(Realm, Service, Why, S1)
                             end
                     end;
 

@@ -39,7 +39,7 @@
     initiate/1,
     accept/2,
     continue/2
-    %delete/1
+    delete/1
     ]).
 
 -export([
@@ -54,6 +54,8 @@
     peer_name/1,
     translate_name/2
     ]).
+
+-export([mech_specific/4]).
 
 -type oid() :: tuple().
 
@@ -601,3 +603,32 @@ translate_name(Name, Oid) ->
     MechMods = maps:values(?mechs),
     translate_name(Name, Oid, MechMods).
 
+delete(S0 = #?MODULE{state = running, mechmod = Mod, mechstate = MS0}) ->
+    case Mod:delete(MS0) of
+        {ok, Token, MS1} ->
+            S1 = S0#?MODULE{mechstate = MS1},
+            {ok, Token, S1};
+        {ok, MS1} ->
+            S1 = S0#?MODULE{mechstate = MS1},
+            {ok, S1};
+        Err ->
+            Err
+    end.
+
+-spec mech_specific(module(), fun(), [term()], gss_mechanism:state()) ->
+    {ok, gss_mechanism:state()} |
+    {ok, term(), gss_mechanism:state()} |
+    gss_mechanism:fatal_error().
+mech_specific(Mod, Fun, Args, S0 = #?MODULE{mechmod = Mod, mechstate = MS0}) ->
+    case erlang:apply(Mod, Fun, Args ++ [MS0]) of
+        {ok, MS1} ->
+            S1 = S0#?MODULE{mechstate = MS1},
+            {ok, S1};
+        {ok, Result, MS1} ->
+            S1 = S0#?MODULE{mechstate = MS1},
+            {ok, Result, S1};
+        Err ->
+            Err
+    end;
+mech_specific(Mod, _Fun, _Args, S0 = #?MODULE{mechmod = OtherMod}) ->
+    {error, bad_mech}.

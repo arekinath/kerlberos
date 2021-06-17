@@ -30,8 +30,9 @@
 -include("SPNEGO.hrl").
 
 -export_type([
-    token/0, message/0, options/0, general_options/0,
-    reason/0, oid/0, general_oid/0, internal_name/0, display_name/0
+    token/0, state/0, message/0, options/0, general_options/0,
+    reason/0, oid/0, general_oid/0, internal_name/0, display_name/0,
+    fatal_error/0
     ]).
 
 -type state() :: term().
