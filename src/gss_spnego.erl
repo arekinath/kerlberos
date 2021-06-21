@@ -38,7 +38,7 @@
 -export([
     initiate/1,
     accept/2,
-    continue/2
+    continue/2,
     delete/1
     ]).
 
@@ -143,12 +143,12 @@ spnego_initiator_fsm(await_mech, T = #'NegTokenResp'{}, S0 = #?MODULE{}) ->
             {continue, Token, S1}
     end;
 spnego_initiator_fsm(accepted,
-        T = #'NegTokenResp'{negState = 'accept-completed'},
+        #'NegTokenResp'{negState = 'accept-completed'},
         S0 = #?MODULE{want_mic = false}) ->
     S1 = S0#?MODULE{state = running},
     {ok, S1};
 spnego_initiator_fsm(accepted,
-        T = #'NegTokenResp'{negState = 'accept-completed', mechListMIC = MIC},
+        #'NegTokenResp'{negState = 'accept-completed', mechListMIC = MIC},
         S0 = #?MODULE{want_mic = true}) ->
     case verify_mechlist_mic(MIC, S0) of
         {true, S1} ->
@@ -160,8 +160,7 @@ spnego_initiator_fsm(accepted,
 spnego_initiator_fsm(continue, T = #'NegTokenResp'{}, S0 = #?MODULE{}) ->
     #'NegTokenResp'{negState = NS, responseToken = MToken0,
                     mechListMIC = MIC} = T,
-    #?MODULE{config = Opts, mechmod = Mod, mechstate = MS0,
-             want_mic = WantMIC0} = S0,
+    #?MODULE{mechmod = Mod, mechstate = MS0, want_mic = WantMIC0} = S0,
     WantMIC1 = case NS of
         'request-mic' -> true;
         _ -> WantMIC0
@@ -187,7 +186,7 @@ spnego_initiator_fsm(continue, T = #'NegTokenResp'{}, S0 = #?MODULE{}) ->
                             S4 = S3#?MODULE{state = running,
                                             want_mic = true},
                             {ok, Token, S4};
-                        {false, S2} ->
+                        {false, _S2} ->
                             {error, defective_token}
                     end;
                 {ok, MToken1, MS1} ->
@@ -204,7 +203,7 @@ spnego_initiator_fsm(continue, T = #'NegTokenResp'{}, S0 = #?MODULE{}) ->
                                 {'negTokenResp', TokenRec}),
                             S4 = S3#?MODULE{state = accepted, want_mic = true},
                             {continue, Token, S4};
-                        {false, S2} ->
+                        {false, _S2} ->
                             {error, defective_token}
                     end;
                 {continue, MToken1, MS1} ->
@@ -220,7 +219,7 @@ spnego_initiator_fsm(continue, T = #'NegTokenResp'{}, S0 = #?MODULE{}) ->
                             S3 = S2#?MODULE{state = continue, mechstate = MS1,
                                             want_mic = true},
                             {continue, Token, S3};
-                        {false, S2} ->
+                        {false, _S2} ->
                             {error, defective_token}
                     end;
                 Err = {error, _Why} -> Err
@@ -259,7 +258,7 @@ spnego_initiator_fsm(continue, T = #'NegTokenResp'{}, S0 = #?MODULE{}) ->
                 Err = {error, _Why} -> Err
             end
     end;
-spnego_initiator_fsm(running, _, S0 = #?MODULE{}) ->
+spnego_initiator_fsm(running, _, _S0 = #?MODULE{}) ->
     {error, bad_state}.
 
 select_mech([]) -> {error, no_match};
@@ -354,15 +353,15 @@ spnego_acceptor_fsm(continue, T = #'NegTokenResp'{}, S0 = #?MODULE{}) ->
     end,
     Result = Mod:continue(MToken0, MS0),
     T0 = #'NegTokenResp'{},
-    spnego_accept_common(WantMIC2, T0, MIC, Result, S1);
+    spnego_accept_common(ExpectMIC, T0, MIC, Result, S1);
 spnego_acceptor_fsm(accepted,
-                    T = #'NegTokenResp'{negState = 'accept-completed'},
+                    #'NegTokenResp'{negState = 'accept-completed'},
                     S0 = #?MODULE{want_mic = false}) ->
     S1 = S0#?MODULE{state = running},
     {ok, S1};
 spnego_acceptor_fsm(accepted,
-                    T = #'NegTokenResp'{negState = 'accept-completed',
-                                        mechListMIC = MIC},
+                    #'NegTokenResp'{negState = 'accept-completed',
+                                    mechListMIC = MIC},
                     S0 = #?MODULE{want_mic = true}) ->
     case verify_mechlist_mic(MIC, S0) of
         {true, S1} ->
@@ -371,7 +370,7 @@ spnego_acceptor_fsm(accepted,
         {false, _S1} ->
             {error, defective_token}
     end;
-spnego_acceptor_fsm(_, _, S0 = #?MODULE{}) ->
+spnego_acceptor_fsm(_, _, _S0 = #?MODULE{}) ->
     {error, bad_state}.
 
 spnego_accept_common(_ExpectMIC = true, T0, MIC, Result, S0 = #?MODULE{}) ->
@@ -389,7 +388,7 @@ spnego_accept_common(_ExpectMIC = true, T0, MIC, Result, S0 = #?MODULE{}) ->
                         {'negTokenResp', TokenRec}),
                     S4 = S3#?MODULE{state = running, want_mic = true},
                     {ok, Token, S4};
-                {false, S2} ->
+                {false, _S2} ->
                     {error, defective_token}
             end;
         {ok, MToken1, MS0} ->
@@ -406,7 +405,7 @@ spnego_accept_common(_ExpectMIC = true, T0, MIC, Result, S0 = #?MODULE{}) ->
                         {'negTokenResp', TokenRec}),
                     S4 = S3#?MODULE{state = accepted, want_mic = true},
                     {continue, Token, S4};
-                {false, S2} ->
+                {false, _S2} ->
                     {error, defective_token}
             end;
         {continue, MToken1, MS0} ->
@@ -421,7 +420,7 @@ spnego_accept_common(_ExpectMIC = true, T0, MIC, Result, S0 = #?MODULE{}) ->
             {continue, Token, S1};
         Err = {error, _Why} -> Err
     end;
-spnego_accept_common(_ExpectMIC = false, T0, MIC, Result, S0 = #?MODULE{}) ->
+spnego_accept_common(_ExpectMIC = false, T0, _MIC, Result, S0 = #?MODULE{}) ->
     #?MODULE{want_mic = WantMIC} = S0,
     case Result of
         {ok, MS0} when WantMIC ->
@@ -524,7 +523,7 @@ continue(Token, S0 = #?MODULE{party = initiator, state = State}) ->
     end;
 continue(Token, S0 = #?MODULE{party = acceptor, state = State}) ->
     case (catch gss_token:decode_initial(Token)) of
-        {'EXIT', Why} -> MechData = Token;
+        {'EXIT', _Why} -> MechData = Token;
         {?'id-mech-spnego', MechData, <<>>} -> ok
     end,
     case 'SPNEGO':decode('NegotiationToken', MechData) of
@@ -582,10 +581,10 @@ verify_mic(Message, Token, S0 = #?MODULE{state = running,
             Err
     end.
 
-local_name(S0 = #?MODULE{state = running, mechmod = Mod, mechstate = MS0}) ->
+local_name(#?MODULE{state = running, mechmod = Mod, mechstate = MS0}) ->
     Mod:local_name(MS0).
 
-peer_name(S0 = #?MODULE{state = running, mechmod = Mod, mechstate = MS0}) ->
+peer_name(#?MODULE{state = running, mechmod = Mod, mechstate = MS0}) ->
     Mod:peer_name(MS0).
 
 translate_name(Name, Oid, [MechMod]) ->
@@ -630,5 +629,6 @@ mech_specific(Mod, Fun, Args, S0 = #?MODULE{mechmod = Mod, mechstate = MS0}) ->
         Err ->
             Err
     end;
-mech_specific(Mod, _Fun, _Args, S0 = #?MODULE{mechmod = OtherMod}) ->
+mech_specific(Mod, _Fun, _Args, _S0 = #?MODULE{mechmod = OtherMod})
+                                                    when Mod =/= OtherMod ->
     {error, bad_mech}.
