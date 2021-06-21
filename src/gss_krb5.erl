@@ -25,6 +25,7 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %%
 
+%% @doc GSS mechanism module using Kerberos credentials (based on RFC1964).
 -module(gss_krb5).
 -behaviour(gss_mechanism).
 
@@ -66,6 +67,10 @@
     max_skew => msec()
     }.
 
+-type state() :: gss_mechanism:state().
+-type token() :: gss_mechanism:token().
+-type message() :: gss_mechanism:message().
+
 -type realm() :: string().
 
 -record(?MODULE, {
@@ -83,14 +88,33 @@
     rseq :: undefined | integer()
     }).
 
+%% @doc Retrieves the peer's Kerberos ticket if available (only possible if
+%%      we are the accepting party).
+-spec peer_ticket(state()) ->
+    {ok, #'Ticket'{}, state()} | {error, not_yet_available}.
 peer_ticket(#?MODULE{tkt = undefined}) -> {error, not_yet_available};
 peer_ticket(S0 = #?MODULE{tkt = Ticket}) -> {ok, Ticket, S0}.
 
+%% @doc Retrieves the local party's name in the GSS context.
+-spec local_name(state()) ->
+    {ok, gss_mechanism:internal_name()} |
+    {error, not_yet_available}.
 local_name(#?MODULE{us = undefined}) -> {error, not_yet_available};
 local_name(#?MODULE{us = Us}) -> {ok, Us}.
+
+%% @doc Retrieves the remote (peer) party's authenticated name in the GSS
+%% context.
+-spec peer_name(state()) ->
+    {ok, gss_mechanism:internal_name()} |
+    {error, not_yet_available}.
 peer_name(#?MODULE{them = undefined}) -> {error, not_yet_available};
 peer_name(#?MODULE{them = Them}) -> {ok, Them}.
 
+%% @doc Translates a name into a more useful generalised form.
+-spec translate_name(gss_mechanism:internal_name(), gss_mechanism:oid() | any) ->
+    {ok, gss_mechanism:display_name()} |
+    {error, bad_name} |
+    {error, bad_target_oid}.
 translate_name({_R, #'PrincipalName'{'name-type' = 1,
                                      'name-string' = [Username]}},
                 ?'id-user-name') ->
@@ -452,6 +476,21 @@ decode_flags(<<V:32/little>>) ->
         end
     end, #{}, ?cksum_flags).
 
+%% @doc Begins a new GSS context as the initiator (connecting) party.
+%%
+%% If returning <code>{ok, token(), state()}</code>, then the <code>token</code>
+%% is the last token in the setup flow (and after transporting it to the
+%% acceptor, applications should begin calling <code>get_mic/2</code> and
+%% <code>wrap/2</code>).
+%%
+%% If returning <code>{continue, token(), state()}</code>, the mechanism expects
+%% a reply to the given token first, which should be given to
+%% <code>continue/2</code>.
+-spec initiate(options()) ->
+    {ok, token(), state()} |
+    {continue, token(), state()} |
+    {ok, state()} |
+    gss_mechanism:fatal_error().
 initiate(C) ->
     #{chan_bindings := Bindings0, ticket := TicketInfo} = C,
     Deleg = maps:get(delegate, C, false),
@@ -547,6 +586,21 @@ init_generic_error(Realm, Service, Why, S0 = #?MODULE{}) ->
     Token = gss_token:encode_initial(?'id-mech-krb5', MechData),
     {continue, Token, S0#?MODULE{continue = error}}.
 
+%% @doc Begins a new GSS context as the acceptor (listening) party.
+%%
+%% If returning <code>{ok, token(), state()}</code>, then the <code>token</code>
+%% is the last token in the setup flow (and after transporting it to the
+%% initiator, applications should begin calling <code>get_mic/2</code> and
+%% <code>wrap/2</code>).
+%%
+%% If returning <code>{continue, token(), state()}</code>, the mechanism expects
+%% a reply to the given token first, which should be given to
+%% <code>continue/2</code>.
+-spec accept(token(), options()) ->
+    {ok, token(), state()} |
+    {continue, token(), state()} |
+    {ok, state()} |
+    gss_mechanism:fatal_error().
 accept(Token, C) ->
     #{keytab := KeyTab} = C,
     S0 = #?MODULE{party = acceptor, opts = C},
@@ -775,6 +829,16 @@ accept_send_rep(A = #'Authenticator'{}, S0 = #?MODULE{opts = C}) ->
             {ok, Token, S1}
     end.
 
+%% @doc Continues an initiate() or accept() operation with a new token from the
+%% other party.
+%%
+%% Return values have the same meaning as in <code>initiate/1</code> or
+%% <code>accept/2</code>.
+-spec continue(token(), state()) ->
+    {ok, token(), state()} |
+    {continue, token(), state()} |
+    {ok, state()} |
+    gss_mechanism:fatal_error().
 continue(Token, S0 = #?MODULE{continue = initiate, party = initiator}) ->
     #?MODULE{opts = C, nonce = Nonce, tktkey = Key} = S0,
     case (catch gss_token:decode_initial(Token)) of
@@ -825,9 +889,23 @@ continue(Token, S0 = #?MODULE{continue = initiate, party = initiator}) ->
 continue(_Token, S0 = #?MODULE{continue = error}) ->
     {error, defective_token, S0}.
 
-delete(S0 = #?MODULE{}) ->
-    {ok, S0}.
+%% @doc Destroys a GSS context, producing a token informing the other party
+%% (if the mechanism supports it).
+-spec delete(state()) ->
+    {ok, token()} |
+    ok |
+    gss_mechanism:fatal_error().
+delete(_S0 = #?MODULE{}) ->
+    ok.
 
+%% @doc Computes a MIC (Message Integrity Check) token for a given message.
+%%
+%% A MIC token should be transported to the other party alongside the message
+%% so that they may check its integrity (the token does not contain the
+%% message).
+-spec get_mic(message(), state()) ->
+    {ok, token(), state()} |
+    gss_mechanism:fatal_error().
 get_mic(Message, S0 = #?MODULE{continue = undefined}) ->
     #?MODULE{opts = C, seq = Seq0, party = Party, ikey = IKey,
              ackey = ACKey} = S0,
@@ -861,6 +939,14 @@ get_mic(Message, S0 = #?MODULE{continue = undefined}) ->
             {ok, Token, S1}
     end.
 
+%% @doc Wraps a message into a token, which may encrypt and checksum it as
+%% needed (depending on mechanism and the options given).
+%%
+%% A Wrap Token should be transported to the other party without any additional
+%% information.
+-spec wrap(message(), state()) ->
+    {ok, token(), state()} |
+    gss_mechanism:fatal_error().
 wrap(Message, S0 = #?MODULE{continue = undefined}) ->
     #?MODULE{opts = C, seq = Seq0, party = Party, ikey = IKey,
              ackey = ACKey} = S0,
@@ -894,6 +980,12 @@ wrap(Message, S0 = #?MODULE{continue = undefined}) ->
             {ok, Token, S1}
     end.
 
+%% @doc Validates and unpacks a Wrap token which has been received, returning
+%% the enclosed message.
+-spec unwrap(token(), state()) ->
+    {ok, message(), state()} |
+    gss_mechanism:per_msg_error() |
+    gss_mechanism:fatal_error().
 unwrap(Token, S0 = #?MODULE{continue = undefined}) ->
     #?MODULE{opts = C, ikey = IKey, ackey = ACKey, rseq = RSeq0,
              party = Party} = S0,
@@ -948,6 +1040,12 @@ unwrap(Token, S0 = #?MODULE{continue = undefined}) ->
             {error, defective_token, S0}
     end.
 
+%% @doc Verifies a MIC token which has been received alongside the given
+%% message.
+-spec verify_mic(message(), token(), state()) ->
+    {ok, state()} |
+    gss_mechanism:per_msg_error() |
+    gss_mechanism:fatal_error().
 verify_mic(Message, Token, S0 = #?MODULE{continue = undefined}) ->
     #?MODULE{opts = C, rseq = RSeq0, party = Party, ikey = IKey,
              ackey = ACKey} = S0,

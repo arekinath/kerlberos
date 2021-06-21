@@ -25,6 +25,8 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %%
 
+%% @doc Represents a Kerberos realm for the purpose of interacting with it as
+%%      a client.
 -module(krb_realm).
 
 -behaviour(gen_server).
@@ -53,6 +55,8 @@
 start_link(Realm) ->
     gen_server:start_link(?MODULE, [Realm], []).
 
+%% @doc Opens a client for a Kerberos realm, either returning an existing
+%%      client process or starting a new one.
 -spec open(realm()) -> {ok, pid()} | {error, term()}.
 open(Realm) ->
     case krb_realm_db:lookup(Realm) of
@@ -73,6 +77,8 @@ open(Realm) ->
 -type auth_options() :: #{lifetime => secs(),
                           flags => [krb_proto:kdc_flag()]}.
 
+%% @doc Performs an initial Kerberos password authentication for the given
+%%      principal (AS-REQ with an encrypted timestamp).
 -spec authenticate(pid(), principal(), password(), auth_options()) ->
     {ok, krb_proto:ticket()} | {error, term()}.
 authenticate(Pid, Principal, Secret, Options) ->
@@ -82,6 +88,8 @@ authenticate(Pid, Principal, Secret, Options) ->
                          flags => [krb_proto:kdc_flag()],
                          request_pac => boolean()}.
 
+%% @doc Obtains a service ticket using the given Ticket-Granting Ticket (TGT)
+%%      for the specified service principal (TGS-REQ).
 -spec obtain_ticket(pid(), krb_proto:ticket(), principal(), tgs_options()) ->
     {ok, krb_proto:ticket()} | {error, term()}.
 obtain_ticket(Pid, TGT, ServicePrincipal, Options) ->
@@ -94,6 +102,7 @@ obtain_ticket(Pid, TGT, ServicePrincipal, Options) ->
     tref :: reference()
     }).
 
+%% @private
 init([Realm]) ->
     Config = krb_realm_conf:configure(Realm),
     #{kdc := Kdcs, ttl := TTL} = Config,
@@ -121,10 +130,12 @@ init([Realm]) ->
             end
     end.
 
+%% @private
 terminate(_Why, #?MODULE{protosrv = Srv}) ->
     krb_proto_srv:drain(Srv),
     ok.
 
+%% @private
 handle_info(refresh_config, S0 = #?MODULE{realm = R, protosrv = PS0,
                                           config = C0}) ->
     CI0 = maps:remove(ttl, C0),
@@ -143,6 +154,7 @@ handle_info(refresh_config, S0 = #?MODULE{realm = R, protosrv = PS0,
             {noreply, S1}
     end.
 
+%% @private
 handle_call({authenticate, Princ, Secret, Opts}, _From,
                     S0 = #?MODULE{config = C0, protosrv = PS0, realm = R}) ->
     C1 = maps:merge(C0, Opts),
