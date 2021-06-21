@@ -34,13 +34,14 @@
 
 -export([
     start_link/1,
+    drain/1,
     start_req/6,
     cancel_req/2
     ]).
 
 -export([
     init/1,
-    terminate/3,
+    terminate/2,
     handle_call/3,
     handle_cast/2,
     handle_info/2
@@ -49,6 +50,10 @@
 -spec start_link(krb_client:config()) -> {ok, krb_proto_srv()}.
 start_link(Config = #{realm := _Realm}) ->
     gen_server:start_link(?MODULE, [Config], []).
+
+-spec drain(krb_proto_srv()) -> ok.
+drain(Pid) ->
+    gen_server:call(Pid, drain).
 
 -type krb_proto_srv() :: pid().
 
@@ -84,9 +89,11 @@ cancel_req(Pid, Ref) ->
     refmap = #{} :: #{proto_fsm_ref() => req_ref()},
     reqs = #{} :: #{req_ref() => #req{}},
     udps = [] :: [pid()],
-    tcps = [] :: [pid()]
+    tcps = [] :: [pid()],
+    drain :: undefined | gen_server:from()
     }).
 
+%% @private
 init([Config]) ->
     #{realm := Realm, kdc := Kdcs} = Config,
     Timeout = maps:get(timeout, Config, 500),
@@ -115,8 +122,9 @@ init([Config]) ->
     end, KdcsTruncated),
     {ok, #?MODULE{config = Config, udps = UDPs, tcps = TCPs}}.
 
-terminate(Why, State, #?MODULE{}) ->
-    lager:debug("terminating from ~p due to ~p", [State, Why]),
+%% @private
+terminate(Why, #?MODULE{}) ->
+    lager:debug("terminating due to ~p", [Why]),
     ok.
 
 -spec get_n_prefs(integer(), term(), [pid()]) -> {[proto_fsm_ref()], [pid()], [pid()]}.
@@ -141,6 +149,12 @@ get_n_prefs_proto(udp, S0 = #?MODULE{udps = Pids0}, N, Call) ->
     Pids1 = NotUsed ++ lists:reverse(Used),
     {PRefs, S0#?MODULE{udps = Pids1}}.
 
+%% @private
+handle_call({req, _Pid, _Proto, _N, _Type, _Msg, _Expect}, From,
+                                            S0 = #?MODULE{drain = Drainer})
+                                            when Drainer =/= undefined ->
+    gen_server:reply(From, {error, draining}),
+    {noreply, S0};
 handle_call({req, Pid, Proto, N, Type, Msg, Expect}, From,
                                             S0 = #?MODULE{reqs = Reqs0,
                                                           refmap = RefMap0}) ->
@@ -163,18 +177,46 @@ handle_call({req, Pid, Proto, N, Type, Msg, Expect}, From,
             {noreply, S2}
     end;
 
-handle_call({cancel, Ref}, _From, S0 = #?MODULE{reqs = Reqs0,
-                                                refmap = RefMap0}) ->
-    #{Ref := Req} = Reqs0,
-    #req{protorefs = PRefs} = Req,
-    Reqs1 = maps:remove(Ref, Reqs0),
-    RefMap1 = lists:foldl(fun (PRef, Acc) ->
-        maps:remove(PRef, Acc)
-    end, RefMap0, PRefs),
-    S1 = S0#?MODULE{reqs = Reqs1, refmap = RefMap1},
-    lager:debug("cancel req ~p", [Ref]),
-    {reply, ok, S1}.
+handle_call({cancel, Ref}, From, S0 = #?MODULE{reqs = Reqs0,
+                                               refmap = RefMap0}) ->
+    case Reqs0 of
+        #{Ref := Req} ->
+            #req{protorefs = PRefs} = Req,
+            Reqs1 = maps:remove(Ref, Reqs0),
+            RefMap1 = lists:foldl(fun (PRef, Acc) ->
+                maps:remove(PRef, Acc)
+            end, RefMap0, PRefs),
+            S1 = S0#?MODULE{reqs = Reqs1, refmap = RefMap1},
+            lager:debug("cancel req ~p", [Ref]),
+            gen_server:reply(From, ok),
+            maybe_stop_if_draining(S1);
+        _ ->
+            {reply, ok, S0}
+    end;
 
+handle_call(drain, From, S0 = #?MODULE{drain = undefined, reqs = Reqs0}) ->
+    case maps:size(Reqs0) of
+        0 ->
+            gen_server:reply(From, ok),
+            {stop, normal, S0};
+        _ ->
+            lager:debug("draining proto_srv"),
+            S1 = S0#?MODULE{drain = From},
+            {noreply, S1}
+    end.
+
+maybe_stop_if_draining(S0 = #?MODULE{drain = undefined}) ->
+    {noreply, S0};
+maybe_stop_if_draining(S0 = #?MODULE{drain = From, reqs = Reqs}) ->
+    case maps:size(Reqs) of
+        0 ->
+            gen_server:reply(From, ok),
+            {stop, normal, S0};
+        _ ->
+            {noreply, S0}
+    end.
+
+%% @private
 handle_info({krb_reply, PRef, Msg}, S0 = #?MODULE{refmap = RefMap0,
                                                   reqs = Reqs0}) ->
     case RefMap0 of
@@ -182,16 +224,20 @@ handle_info({krb_reply, PRef, Msg}, S0 = #?MODULE{refmap = RefMap0,
             #{Ref := Req0} = Reqs0,
             #req{pid = Pid, protorefs = PRefs0} = Req0,
             Pid ! {krb_reply, Ref, Msg},
-            case PRefs0 of
-                [PRef] -> Pid ! {krb_reply_done, Ref};
-                _ -> ok
-            end,
             RefMap1 = maps:remove(PRef, RefMap0),
-            PRefs1 = PRefs0 -- [PRef],
-            Req1 = Req0#req{protorefs = PRefs1},
-            Reqs1 = Reqs0#{Ref => Req1},
-            S1 = S0#?MODULE{reqs = Reqs1, refmap = RefMap1},
-            {noreply, S1};
+            case PRefs0 of
+                [PRef] ->
+                    Pid ! {krb_reply_done, Ref},
+                    Reqs1 = maps:remove(Ref, Reqs0),
+                    S1 = S0#?MODULE{reqs = Reqs1, refmap = RefMap1},
+                    maybe_stop_if_draining(S1);
+                _ ->
+                    PRefs1 = PRefs0 -- [PRef],
+                    Req1 = Req0#req{protorefs = PRefs1},
+                    Reqs1 = Reqs0#{Ref => Req1},
+                    S1 = S0#?MODULE{reqs = Reqs1, refmap = RefMap1},
+                    {noreply, S1}
+            end;
         _ ->
             {noreply, S0}
     end;
@@ -201,19 +247,24 @@ handle_info({krb_error, PRef}, S0 = #?MODULE{refmap = RefMap0,
         #{PRef := Ref} ->
             #{Ref := Req0} = Reqs0,
             #req{pid = Pid, protorefs = PRefs0} = Req0,
-            case PRefs0 of
-                [PRef] -> Pid ! {krb_error, Ref};
-                _ -> ok
-            end,
             RefMap1 = maps:remove(PRef, RefMap0),
-            PRefs1 = PRefs0 -- [PRef],
-            Req1 = Req0#req{protorefs = PRefs1},
-            Reqs1 = Reqs0#{Ref => Req1},
-            S1 = S0#?MODULE{reqs = Reqs1, refmap = RefMap1},
-            {noreply, S1};
+            case PRefs0 of
+                [PRef] ->
+                    Pid ! {krb_error, Ref},
+                    Reqs1 = maps:remove(Ref, Reqs0),
+                    S1 = S0#?MODULE{reqs = Reqs1, refmap = RefMap1},
+                    maybe_stop_if_draining(S1);
+                _ ->
+                    PRefs1 = PRefs0 -- [PRef],
+                    Req1 = Req0#req{protorefs = PRefs1},
+                    Reqs1 = Reqs0#{Ref => Req1},
+                    S1 = S0#?MODULE{reqs = Reqs1, refmap = RefMap1},
+                    {noreply, S1}
+            end;
         _ ->
             {noreply, S0}
     end.
 
+%% @private
 handle_cast(C, S0) ->
     {stop, {unsupported_cast, C}, S0}.

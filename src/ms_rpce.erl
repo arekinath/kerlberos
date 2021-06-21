@@ -25,11 +25,11 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %%
 
--module(rpce).
+-module(ms_rpce).
 
 -export([start/1, finish/1, read/2, get_ptr/2]).
 
--include("pac.hrl").
+-include("ms_pac.hrl").
 -export_type([rpce_ptr/0, rpce_state/0]).
 
 -record(rpce_ptr, {tag :: binary()}).

@@ -25,12 +25,15 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %%
 
--module(mit_keytab).
+%% @doc Functions for dealing with Kerberos keytabs.
+-module(krb_mit_keytab).
 
 -export([
-    parse/1
+    parse/1,
+    filter_for_ticket/2
     ]).
 
+-include("KRB5.hrl").
 -include("krb_key_records.hrl").
 
 -export_type([keytab_entry/0]).
@@ -43,6 +46,32 @@
     key => krb_crypto:base_key()
     }.
 
+%% @doc Filters a keytab for keys which can be used to decrypt a given Kerberos
+%%      ticket.
+%%
+%% Matches based on realm, principal and key version. EType matching can be
+%% done by <code>krb_proto:decrypt()</code>.
+-spec filter_for_ticket([keytab_entry()], #'Ticket'{}) ->
+    {ok, [keytab_entry()]} | {error, not_found}.
+filter_for_ticket(KeyTab, #'Ticket'{realm = Realm, sname = SvcName,
+                                'enc-part' = EP}) ->
+    #'EncryptedData'{kvno = Version} = EP,
+    #'PrincipalName'{'name-string' = Name} = SvcName,
+    Matches = lists:filter(fun
+        (#{realm := KRealm, principal := KName, version := KVersion}) when
+            (KRealm =:= Realm) and (KName =:= Name) and
+            (Version =:= KVersion) -> true;
+        (_) -> false
+    end, KeyTab),
+    case Matches of
+        [_ | _] -> {ok, Matches};
+        _ -> {error, not_found}
+    end.
+
+%% @doc Parses an MIT-format keytab file.
+%%
+%% Returns a list of maps representing each entry in the keytab, consisting
+%% of a Keberos key and associated meta-data.
 -spec parse(binary()) -> {ok, [keytab_entry()]} | {error, term()}.
 parse(<<5, 2, Rest/binary>>) ->
     case (catch parse_next(Rest)) of

@@ -25,14 +25,33 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %%
 
--module(krlb_app).
+-module(krb_sup).
 
--behaviour(application).
+-behaviour(supervisor).
 
--export([start/2, stop/1]).
+-export([start_link/0]).
 
-start(_StartType, _StartArgs) ->
-    krlb_sup:start_link().
+-export([init/1]).
 
-stop(_State) ->
-    ok.
+-define(SERVER, ?MODULE).
+
+start_link() ->
+    supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+
+%% sup_flags() = #{strategy => strategy(),         % optional
+%%                 intensity => non_neg_integer(), % optional
+%%                 period => pos_integer()}        % optional
+%% child_spec() = #{id => child_id(),       % mandatory
+%%                  start => mfargs(),      % mandatory
+%%                  restart => restart(),   % optional
+%%                  shutdown => shutdown(), % optional
+%%                  type => worker(),       % optional
+%%                  modules => modules()}   % optional
+init([]) ->
+    SupFlags = #{strategy => one_for_all,
+        intensity => 5,
+        period => 10},
+    ChildSpecs = [],
+    {ok, {SupFlags, ChildSpecs}}.
+
+%% internal functions

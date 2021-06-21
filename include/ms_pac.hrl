@@ -31,7 +31,7 @@
 	identifier_auth :: integer(),
 	sub_auths :: [integer()]}).
 -record(sid_and_attributes, {
-	sid_ptr :: rpce:rpce_ptr(),
+	sid_ptr :: ms_rpce:rpce_ptr(),
 	sid = deferred :: #sid{} | deferred,
 	attrs :: [sid_attr()]}).
 -record(group_membership, {

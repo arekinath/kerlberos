@@ -13,7 +13,7 @@
                   lager,
                   neotoma
                  ]},
-  {mod, { krlb_app, []}},
+  {mod, { krb_app, []}},
   {env, [
     ]}
  ]}.

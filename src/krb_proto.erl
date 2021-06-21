@@ -243,7 +243,7 @@ find_key(_ET, _Ks) -> no_key_found.
 -type keyset() ::
     krb_crypto:base_key() |
     [krb_crypto:base_key()] |
-    [mit_keytab:keytab_entry()].
+    [krb_mit_keytab:keytab_entry()].
 
 -spec decrypt(keyset(), krb_crypto:usage(), encrypted()) -> {ok, decrypted()} | {error, term()}.
 decrypt(Ks, Usage, #'EncryptedData'{etype = EType, cipher = CT}) ->

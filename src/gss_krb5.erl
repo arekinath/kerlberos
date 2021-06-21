@@ -62,7 +62,7 @@
 
 -type options() :: gss_mechanism:general_options() | #{
     ticket => krb_proto:ticket(),
-    keytab => [mit_keytab:keytab_entry()],
+    keytab => [krb_mit_keytab:keytab_entry()],
     max_skew => msec()
     }.
 
@@ -535,21 +535,6 @@ initiate(C) ->
             {ok, Token, S0}
     end.
 
-filter_keytab(KeyTab, #'Ticket'{realm = Realm, sname = SvcName,
-                                'enc-part' = EP}) ->
-    #'EncryptedData'{kvno = Version} = EP,
-    #'PrincipalName'{'name-string' = Name} = SvcName,
-    Matches = lists:filter(fun
-        (#{realm := KRealm, principal := KName, version := KVersion}) when
-            (KRealm =:= Realm) and (KName =:= Name) and
-            (Version =:= KVersion) -> true;
-        (_) -> false
-    end, KeyTab),
-    case Matches of
-        [_ | _] -> {ok, Matches};
-        _ -> {error, not_found}
-    end.
-
 init_error(Realm, Service, Code, S0 = #?MODULE{}) ->
     Err = krb_proto:make_error(Realm, Service, Code),
     MechData = encode_token(Err),
@@ -592,7 +577,7 @@ accept_req(APReq0, S0 = #?MODULE{opts = C}) ->
     #'PrincipalName'{'name-string' = Service} = SName,
     %Mutual = maps:get(mutual_auth, C, false),
     %Mutual = sets:is_element(mutual, APOpts),
-    case filter_keytab(KeyTab, Ticket0) of
+    case krb_mit_keytab:filter_for_ticket(KeyTab, Ticket0) of
         {ok, KeySet} ->
             case krb_proto:decrypt(KeySet, kdc_rep_ticket, Ticket0) of
                 {ok, Ticket1} ->
