@@ -54,7 +54,7 @@
 -spec filter_for_ticket([keytab_entry()], #'Ticket'{}) ->
     {ok, [keytab_entry()]} | {error, not_found}.
 filter_for_ticket(KeyTab, #'Ticket'{realm = Realm, sname = SvcName,
-                                'enc-part' = EP}) ->
+                                    'enc-part' = EP}) ->
     #'EncryptedData'{kvno = Version} = EP,
     #'PrincipalName'{'name-string' = Name} = SvcName,
     Matches = lists:filter(fun

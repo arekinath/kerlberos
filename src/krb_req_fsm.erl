@@ -25,6 +25,7 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %%
 
+%% @private
 -module(krb_req_fsm).
 -behaviour(gen_statem).
 

@@ -25,6 +25,7 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %%
 
+%% @private
 -module(krb_errors).
 
 -export([err_to_atom/1, atom_to_err/1]).

@@ -30,11 +30,23 @@
 
 -export([decode/1, decode_ticket/1]).
 
+%% @headerfile "ms_pac.hrl"
 -include("ms_pac.hrl").
 -include("KRB5.hrl").
 
--export_type([pac/0]).
+-export_type([pac/0, sid/0, sid_attr/0, pac_buffer/0]).
+
+-type sid_attr() :: mandatory | default | enabled | owner | resource.
+-type sid() :: #sid{}.
+
 -type pac() :: #pac{}.
+
+-type pac_unknown() :: #pac_unknown{}.
+-type pac_client_info() :: #pac_client_info{}.
+-type pac_upn_dns() :: #pac_upn_dns{}.
+-type pac_logon_info() :: #pac_logon_info{}.
+-type pac_buffer() :: pac_unknown() | pac_client_info() |
+    pac_upn_dns() | pac_logon_info().
 
 %% @doc Extracts and decodes a PAC from a given Kerberos ticket.
 -spec decode_ticket(#'Ticket'{}) ->
@@ -66,8 +78,8 @@ find_pac_ad([#'AuthorizationData_SEQOF'{'ad-type' = 1} = AD0 | Rest]) ->
 find_pac_ad([_ | Rest]) ->
     find_pac_ad(Rest).
 
-%% @doc Decodes a PAC from raw bytes.
--spec decode(binary()) -> #pac{}.
+%% @doc Decodes a PAC from raw bytes. Throws errors on invalid input.
+-spec decode(binary()) -> pac().
 decode(Bin = <<Count:32/little, Version:32/little, Rem/binary>>) ->
     Bufs = decode_info_bufs(Count, Rem, Bin),
     #pac{version = Version, buffers = Bufs}.

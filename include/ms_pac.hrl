@@ -25,38 +25,36 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %%
 
--type sid_attr() :: mandatory | default | enabled | owner | resource.
 -record(sid, {
-	revision :: integer(),
-	identifier_auth :: integer(),
-	sub_auths :: [integer()]}).
+    revision :: integer(),
+    identifier_auth :: integer(),
+    sub_auths :: [integer()]}).
 -record(sid_and_attributes, {
-	sid_ptr :: ms_rpce:rpce_ptr(),
-	sid = deferred :: #sid{} | deferred,
-	attrs :: [sid_attr()]}).
+    sid_ptr :: ms_rpce:rpce_ptr(),
+    sid = deferred :: krb_ms_pac:sid() | deferred,
+    attrs :: [krb_ms_pac:sid_attr()]}).
 -record(group_membership, {
-	rid :: integer(),
-	attrs :: [sid_attr()]}).
+    rid :: integer(),
+    attrs :: [krb_ms_pac:sid_attr()]}).
 
--record(pac, {version :: integer(), buffers :: [pac_buffer()]}).
+-record(pac, {version :: integer(), buffers :: [krb_ms_pac:pac_buffer()]}).
 -record(pac_unknown, {type :: integer(), data :: binary()}).
 -record(pac_client_info, {tgt_time :: integer(), name :: binary()}).
 -record(pac_upn_dns, {upn :: binary(), dns_name :: binary()}).
 -record(pac_logon_info, {
-	times = #{} :: #{atom() => integer() | never | null},
-	ename :: binary(),
-	fname :: binary(),
-	logon_script :: binary(),
-	profile_path :: binary(),
-	homedir :: binary(),
-	home_drive :: binary(),
-	logon_count :: integer(),
-	bad_pw_count :: integer(),
-	userid :: integer(),
-	groups :: [#group_membership{}],
-	logon_server :: binary(),
-	domain :: binary(),
-	domain_sid :: #sid{},
-	sids = [#sid{}]
-	}).
--type pac_buffer() :: #pac_unknown{} | #pac_client_info{} | #pac_upn_dns{}.
+    times = #{} :: #{atom() => integer() | never | null},
+    ename :: binary(),
+    fname :: binary(),
+    logon_script :: binary(),
+    profile_path :: binary(),
+    homedir :: binary(),
+    home_drive :: binary(),
+    logon_count :: integer(),
+    bad_pw_count :: integer(),
+    userid :: integer(),
+    groups :: [#group_membership{}],
+    logon_server :: binary(),
+    domain :: binary(),
+    domain_sid :: krb_ms_pac:sid(),
+    sids = [krb_ms_pac:sid()]
+    }).

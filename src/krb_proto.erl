@@ -25,6 +25,7 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %%
 
+%% @private
 -module(krb_proto).
 
 -compile([{parse_transform, lager_transform}]).

@@ -1,6 +1,6 @@
 %% kerlberos
 %%
-%% Copyright 2015 Alex Wilson <alex@uq.edu.au>
+%% Copyright 2021 Alex Wilson <alex@uq.edu.au>
 %% The University of Queensland
 %% All rights reserved.
 %%
@@ -25,13 +25,12 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %%
 
-
 %% @private
--module(krb_sup).
+-module(krb_realm_sup).
 
 -behaviour(supervisor).
 
--export([start_link/0]).
+-export([start_link/0, start_child/1]).
 
 -export([init/1]).
 
@@ -39,6 +38,9 @@
 
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+
+start_child(Realm) ->
+    supervisor:start_child(?SERVER, [Realm]).
 
 %% sup_flags() = #{strategy => strategy(),         % optional
 %%                 intensity => non_neg_integer(), % optional
@@ -50,14 +52,14 @@ start_link() ->
 %%                  type => worker(),       % optional
 %%                  modules => modules()}   % optional
 init([]) ->
-    SupFlags = #{strategy => one_for_all,
-        intensity => 5,
-        period => 10},
-    ChildSpecs = [
-        #{id => krb_realm_sup, start => {krb_realm_sup, start_link, []},
-          type => supervisor},
-        #{id => krb_realm_db, start => {krb_realm_db, start_link, []}}
-    ],
+    SupFlags = #{strategy => simple_one_for_one,
+        intensity => 0,
+        period => 1},
+    ChildSpecs = [#{
+        id => krb_realm,
+        start => {krb_realm, start_link, []},
+        restart => transient
+    }],
     {ok, {SupFlags, ChildSpecs}}.
 
 %% internal functions

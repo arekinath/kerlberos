@@ -25,6 +25,7 @@
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %%
 
+%% @private
 -module(ms_rpce).
 
 -export([start/1, finish/1, read/2, get_ptr/2]).
@@ -57,7 +58,7 @@ start(Rem0) ->
     <<_:32, Rem3/binary>> = Rem2,
     #rpce_state{r = Rem3, off = 0}.
 
--spec attrs_to_atoms(integer()) -> [sid_attr()].
+-spec attrs_to_atoms(integer()) -> [krb_ms_pac:sid_attr()].
 attrs_to_atoms(N) ->
     <<_:2, E:1, _:25, D:1, C:1, B:1, A:1>> = <<N:32/big>>,
     case A of 1 -> [mandatory]; _ -> [] end ++

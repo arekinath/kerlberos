@@ -28,12 +28,20 @@
 -module(krb_realm_conf).
 
 -export([configure/1, configure/2]).
--export_type([kdc_spec/0, config/0]).
+-export_type([kdc_spec/0, config/0, otp_config/0]).
 
 -type kdc_spec() :: inet:ip_address() | inet:hostname() |
     {inet:ip_address() | inet:hostname(), Port :: integer()}.
+
 -type msecs() :: integer().
+
 -type realm() :: string().
+
+-type otp_realm_config() :: [{default | realm(), config()}].
+-type otp_config() :: {kerlberos, [
+        {realms, [otp_realm_config()]}
+    ]}.
+
 -type config() :: #{
     realm => realm(),
     kdc => [kdc_spec()],
@@ -42,7 +50,18 @@
     parallel => integer(),
     timeout => msecs(),
     retries => integer(),
-    ciphers => [krb_crypto:etype()]}.
+    ciphers => [krb_crypto:etype()]}. %%
+%% Describes configuration relating to a specific Kerberos realm and how to
+%% communicate with it.
+%%
+%% Configuration is taken from (in order of priority, highest priority first):
+%% <ol>
+%%   <li>Parameters given to <code>krb_realm_config:configure/2</code></li>
+%%   <li>OTP application configuration for <code>kerlberos</code> (see the
+%%       type <code>otp_config()</code></li>
+%%   <li>System-wide configuration files (<code>/etc/krb5.conf</code> etc.)</li>
+%%   <li>Hard-coded default values</li>
+%% </ol>
 
 -spec configure(realm()) -> config().
 configure(Realm) ->
@@ -59,7 +78,8 @@ configure(Realm, UserConf) ->
         parallel => 3,
         ciphers => [aes256_hmac_sha384, aes128_hmac_sha256, aes256_hmac_sha1,
             aes128_hmac_sha1, des3_sha1],
-        kdc => []
+        kdc => [],
+        ttl => 3600
     },
     Conf1 = add_realm_conf(Conf0, [
         "/opt/local/etc/krb5/krb5.conf",
@@ -67,26 +87,49 @@ configure(Realm, UserConf) ->
         "/etc/krb5/krb5.conf",
         "/etc/krb5.conf"
     ], unicode:characters_to_binary(Realm, utf8)),
-    Conf2 = maps:merge(Conf1, UserConf),
-    Conf3 = case Conf2 of
-        #{use_dns := true} ->
-            lookup_kdcs(Conf2, Realm);
-        _ ->
-            Conf2
+    {GlobalConfig, RealmConfig} = case application:get_env(kerlberos, realms) of
+        {ok, KC} ->
+            {proplists:get_value(default, KC, #{}),
+             proplists:get_value(Realm, KC, #{})};
+        _ -> {#{}, #{}}
     end,
-    #{port := KdcPort, kdc := Kdcs0} = Conf3,
+    Conf2 = maps:merge(maps:merge(Conf1, GlobalConfig), RealmConfig),
+    Conf3 = maps:merge(Conf2, UserConf),
+    Conf4 = case Conf3 of
+        #{use_dns := true} ->
+            lookup_kdcs(Conf3, Realm);
+        _ ->
+            Conf3
+    end,
+    #{port := KdcPort, kdc := Kdcs0} = Conf4,
     Kdcs1 = lists:map(fun
         ({Host, Port}) -> {Host, Port};
         (Host) -> {Host, KdcPort}
     end, Kdcs0),
-    _Conf4 = Conf3#{kdc => Kdcs1}.
+    _Conf5 = Conf4#{kdc => Kdcs1}.
 
 -spec lookup_kdcs(config(), string()) -> config().
 lookup_kdcs(C0, Domain) ->
-    Results = inet_res:lookup("_kerberos._udp." ++ Domain, in, srv),
+    {ok, Msg} = inet_res:resolve("_kerberos._udp." ++ Domain, in, srv),
+    Answers = inet_dns:msg(Msg, anlist),
+    Srvs = lists:foldl(fun (RR, Acc) ->
+        case {inet_dns:rr(RR, class), inet_dns:rr(RR, type)} of
+            {in, srv} ->
+                TTL = inet_dns:rr(RR, ttl),
+                Data = inet_dns:rr(RR, data),
+                [{TTL, Data} | Acc];
+            _ ->
+                Acc
+        end
+    end, [], Answers),
+    MinTTL0 = lists:min([TTL || {TTL, _Srv} <- Srvs]),
+    MinTTL1 = case C0 of
+        #{ttl := OtherTTL} when (OtherTTL < MinTTL0) -> OtherTTL;
+        _ -> MinTTL0
+    end,
     #{kdc := Kdc0} = C0,
-    DNSKDCs = [{Name, Port} || {_Prio, _Weight, Port, Name} <- Results],
-    C0#{kdc => Kdc0 ++ DNSKDCs}.
+    DNSKDCs = [{Name, Port} || {_TTL, {_Prio, _Weight, Port, Name}} <- Srvs],
+    C0#{ttl => MinTTL1, kdc => Kdc0 ++ DNSKDCs}.
 
 -spec add_realm_conf(config(), [string()], realm()) -> config().
 add_realm_conf(C0, [], _Realm) -> C0;
