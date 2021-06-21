@@ -15,5 +15,7 @@
                  ]},
   {mod, { krb_app, []}},
   {env, [
-    ]}
+    ]},
+  {licenses, ["BSD-2-Clause"]},
+  {links, [{"GitHub", "https://github.com/arekinath/kerlberos"}]}
  ]}.
