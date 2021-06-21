@@ -42,7 +42,8 @@
     init/1,
     terminate/2,
     handle_call/3,
-    handle_info/2
+    handle_info/2,
+    handle_cast/2
     ]).
 
 -type realm() :: string().
@@ -168,3 +169,7 @@ handle_call({obtain_ticket, TGT, Princ, Opts}, _From,
     C2 = C1#{realm => R, principal => Princ, tgt => TGT},
     Ret = krb_tkt_grant_fsm:start_link_and_await(C2, PS0),
     {reply, Ret, S0}.
+
+%% @private
+handle_cast(_, #?MODULE{}) ->
+    error(no_casts).

@@ -68,10 +68,11 @@
 
 -record(?MODULE, {
     party :: acceptor | initiator,
-    state :: initial | running,
+    state :: running | initial | await_mech | await_token | accepted |
+        continue | err_next,
     want_mic = false :: boolean(),
     config :: options(),
-    mech :: oid(),
+    mech :: none | oid(),
     mechmod :: module(),
     mechstate :: term()
     }).
@@ -613,7 +614,7 @@ unwrap(Token, S0 = #?MODULE{state = running,
         {error, Err, MS1} ->
             S1 = S0#?MODULE{mechstate = MS1},
             {error, Err, S1};
-        Err ->
+        Err = {error, _Why} ->
             Err
     end.
 

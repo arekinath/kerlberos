@@ -40,7 +40,8 @@
     init/1,
     terminate/2,
     handle_call/3,
-    handle_info/2
+    handle_info/2,
+    handle_cast/2
     ]).
 
 -spec start_link() -> {ok, pid()}.
@@ -89,7 +90,7 @@ handle_call({register, Realm, Pid}, _From, S0 = #?MODULE{realms = R0,
             {reply, ok, S1}
     end.
 
-handle_info({'DOWN', MRef, process, Pid, Why}, S0 = #?MODULE{realms = R0,
+handle_info({'DOWN', MRef, process, Pid, _Why}, S0 = #?MODULE{realms = R0,
                                                              mons = M0}) ->
     case M0 of
         #{MRef := Realm} ->
@@ -101,3 +102,6 @@ handle_info({'DOWN', MRef, process, Pid, Why}, S0 = #?MODULE{realms = R0,
         _ ->
             {noreply, S0}
     end.
+
+handle_cast(_, #?MODULE{}) ->
+    error(no_cast).

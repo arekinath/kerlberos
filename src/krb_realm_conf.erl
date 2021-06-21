@@ -131,7 +131,7 @@ lookup_kdcs(C0, Domain) ->
     DNSKDCs = [{Name, Port} || {_TTL, {_Prio, _Weight, Port, Name}} <- Srvs],
     C0#{ttl => MinTTL1, kdc => Kdc0 ++ DNSKDCs}.
 
--spec add_realm_conf(config(), [string()], realm()) -> config().
+-spec add_realm_conf(config(), [string()], binary()) -> config().
 add_realm_conf(C0, [], _Realm) -> C0;
 add_realm_conf(C0, [Path | Rest], Realm) ->
     case file:read_file(Path) of

@@ -75,7 +75,7 @@
 
 -record(?MODULE, {
     party :: initiator | acceptor,
-    continue :: undefined | initiate,
+    continue :: undefined | initiate | error,
     them :: undefined | {realm(), #'PrincipalName'{}},
     us :: undefined | {realm(), #'PrincipalName'{}},
     opts :: options(),
@@ -132,9 +132,10 @@ translate_name(_Name, _Oid) ->
 
 -define(default_max_skew, 300000).
 
--type sig_alg() :: des_mac_md5 | md25 | des_mac.
--type seal_alg() :: none | des.
+-type sig_alg() :: des_mac_md5 | md25 | des_mac | hmac_md5_rc4 | hmac_sha1_des3.
+-type seal_alg() :: none | des | rc4 | des3.
 
+-spec sig_alg_a2i(sig_alg()) -> integer().
 sig_alg_a2i(des_mac_md5) -> 16#0000;
 sig_alg_a2i(md25) -> 16#0100;
 sig_alg_a2i(des_mac) -> 16#0200;
@@ -142,6 +143,7 @@ sig_alg_a2i(hmac_md5_rc4) -> 16#1100;
 sig_alg_a2i(hmac_sha1_des3) -> 16#0400;
 sig_alg_a2i(Other) -> error({bad_sig_alg, Other}).
 
+-spec sig_alg_i2a(integer()) -> sig_alg().
 sig_alg_i2a(16#0000) -> des_mac_md5;
 sig_alg_i2a(16#0100) -> md25;
 sig_alg_i2a(16#0200) -> des_mac;
@@ -149,12 +151,14 @@ sig_alg_i2a(16#1100) -> hmac_md5_rc4;
 sig_alg_i2a(16#0400) -> hmac_sha1_des3;
 sig_alg_i2a(Other) -> error({bad_sig_alg, Other}).
 
+-spec seal_alg_i2a(integer()) -> seal_alg().
 seal_alg_i2a(16#ffff) -> none;
 seal_alg_i2a(16#0000) -> des;
 seal_alg_i2a(16#1000) -> rc4;
 seal_alg_i2a(16#0200) -> des3;
 seal_alg_i2a(Other) -> error({bad_seal_alg, Other}).
 
+-spec seal_alg_a2i(seal_alg()) -> integer().
 seal_alg_a2i(none) -> 16#ffff;
 seal_alg_a2i(des) -> 16#0000;
 seal_alg_a2i(rc4) -> 16#1000;
@@ -194,6 +198,10 @@ seal_alg_a2i(Other) -> error({bad_seal_alg, Other}).
     edata :: binary()
     }).
 
+-type tokenrec() :: #'AP-REQ'{} | #'AP-REP'{} | #'KRB-ERROR'{} |
+    #mic_token_v1{} | #wrap_token_v1{} | #mic_token_v2{} | #wrap_token_v2{}.
+
+-spec decode_token(binary()) -> tokenrec().
 decode_token(<<1, 0, APReqBin/binary>>) ->
     {ok, APReq} = krb_proto:decode(APReqBin, ['AP-REQ']),
     APReq;
@@ -247,6 +255,7 @@ decode_token(Token) ->
             error({invalid_token, Token})
     end.
 
+-spec encode_token(tokenrec()) -> binary().
 encode_token(APReq = #'AP-REQ'{}) ->
     {ok, APReqBin} = krb_proto:encode('AP-REQ', APReq),
     <<1, 0, APReqBin/binary>>;
@@ -784,10 +793,10 @@ accept_auth(A, S0 = #?MODULE{tktkey = TktKey, opts = C,
                                 'KRB_AP_ERR_INAPP_CKSUM', S2)
                     end;
 
-                #'Checksum'{cksumtype = CTypeI, checksum = C} ->
+                #'Checksum'{cksumtype = CTypeI, checksum = Ch} ->
                     OurC = krb_crypto:checksum(CKey, <<>>,
                         #{usage => app_data_cksum}),
-                    C = OurC,
+                    Ch = OurC,
                     accept_send_rep(A, S2)
             end
     end.
