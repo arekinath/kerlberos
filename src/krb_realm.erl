@@ -34,7 +34,9 @@
 -export([
     open/1,
     authenticate/4,
-    obtain_ticket/4
+    authenticate/3,
+    obtain_ticket/4,
+    obtain_ticket/3
     ]).
 
 -export([
@@ -85,6 +87,13 @@ open(Realm) ->
 authenticate(Pid, Principal, Secret, Options) ->
     gen_server:call(Pid, {authenticate, Principal, Secret, Options}).
 
+%% @doc Performs an initial Kerberos password authentication for the given
+%%      principal (AS-REQ with an encrypted timestamp).
+-spec authenticate(pid(), principal(), password()) ->
+    {ok, krb_proto:ticket()} | {error, term()}.
+authenticate(Pid, Principal, Secret) ->
+    authenticate(Pid, Principal, Secret, #{}).
+
 -type tgs_options() :: #{lifetime => secs(),
                          flags => [krb_proto:kdc_flag()],
                          request_pac => boolean()}.
@@ -95,6 +104,13 @@ authenticate(Pid, Principal, Secret, Options) ->
     {ok, krb_proto:ticket()} | {error, term()}.
 obtain_ticket(Pid, TGT, ServicePrincipal, Options) ->
     gen_server:call(Pid, {obtain_ticket, TGT, ServicePrincipal, Options}).
+
+%% @doc Obtains a service ticket using the given Ticket-Granting Ticket (TGT)
+%%      for the specified service principal (TGS-REQ).
+-spec obtain_ticket(pid(), krb_proto:ticket(), principal()) ->
+    {ok, krb_proto:ticket()} | {error, term()}.
+obtain_ticket(Pid, TGT, ServicePrincipal) ->
+    gen_server:call(Pid, {obtain_ticket, TGT, ServicePrincipal, #{}}).
 
 -record(?MODULE, {
     realm :: realm(),

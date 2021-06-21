@@ -78,10 +78,9 @@
     }).
 
 -define(mechs, #{
-    {1,2,3,4} => gss_krb5,
     ?'id-mech-krb5' => gss_krb5
     }).
--define(default_mech_prefs, [{1,2,3,4}, ?'id-mech-krb5']).
+-define(default_mech_prefs, [?'id-mech-krb5']).
 
 spnego_initiator_fsm(initial, _, S0 = #?MODULE{config = Opts}) ->
     MechPrefs = maps:get(mech_prefs, Opts, ?default_mech_prefs),

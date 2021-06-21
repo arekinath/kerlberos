@@ -1,7 +1,7 @@
 {application, kerlberos,
  [
-  {description, "Keberos for erlang"},
-  {vsn, "1.0"},
+  {description, "Native KerberosV and GSS-API for Erlang"},
+  {vsn, "1.0.0"},
   {registered, []},
   {included_applications, [
   ]},
