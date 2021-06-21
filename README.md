@@ -6,18 +6,18 @@ MIT Kerberos etc).
 
 Features:
  * KerberosV client
-   ** Authenticate to KDC, obtain a TGT (AS-REQ/AS-REP)
-   ** Use a TGT to obtain another ticket (TGS-REQ/TGS-REP)
-   ** Parses `/etc/krb5.conf`, can use DNS discovery for KDCs, supports
-      fail-over on KDC unavailability, respects DNS TTLs
+   * Authenticate to KDC, obtain a TGT (AS-REQ/AS-REP)
+   * Use a TGT to obtain another ticket (TGS-REQ/TGS-REP)
+   * Parses `/etc/krb5.conf`, can use DNS discovery for KDCs, supports
+     fail-over on KDC unavailability, respects DNS TTLs
  * KerberosV service provider
-   ** Decode MIT-format keytab file, match against a ticket from a client
-   ** Unpack and parse AD PAC in service ticket
+   * Decode MIT-format keytab file, match against a ticket from a client
+   * Unpack and parse AD PAC in service ticket
  * GSS-API initiator/acceptor
-   ** Support for GSS-KerberosV, including mutual auth, MICs and wrap tokens.
-   ** Works with all AES and 3DES enctypes (including new SHA2 variants).
-      Partial support for RC4 enctypes.
-   ** Support for SPNEGO negotiating KerberosV.
+   * Support for GSS-KerberosV, including mutual auth, MICs and wrap tokens.
+   * Works with all AES and 3DES enctypes (including new SHA2 variants).
+     Partial support for RC4 enctypes.
+   * Support for SPNEGO negotiating KerberosV.
 
 Compatible with MIT Kerberos and Active Directory (mostly compatible with
 Heimdal as well).
