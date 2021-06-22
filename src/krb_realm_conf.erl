@@ -37,10 +37,16 @@
 
 -type realm() :: string().
 
--type otp_realm_config() :: [{default | realm(), config()}].
+-type otp_realm_config() :: [{default | realm(), config_list()}].
 -type otp_config() :: {kerlberos, [
         {realms, [otp_realm_config()]}
     ]}.
+
+-type config_list() :: [config_list_item()].
+-type config_list_item() :: {realm, realm()} | {kdc, [kdc_spec()]} |
+    {use_dns, boolean()} | {port, integer()} | {parallel, integer()} |
+    {timeout, msecs()} | {retries, integer()} |
+    {ciphers, [krb_crypto:etype()]}.
 
 -type config() :: #{
     realm => realm(),
@@ -89,8 +95,8 @@ configure(Realm, UserConf) ->
     ], unicode:characters_to_binary(Realm, utf8)),
     {GlobalConfig, RealmConfig} = case application:get_env(kerlberos, realms) of
         {ok, KC} ->
-            {proplists:get_value(default, KC, #{}),
-             proplists:get_value(Realm, KC, #{})};
+            {maps:from_list(proplists:get_value(default, KC, [])),
+             maps:from_list(proplists:get_value(Realm, KC, []))};
         _ -> {#{}, #{}}
     end,
     Conf2 = maps:merge(maps:merge(Conf1, GlobalConfig), RealmConfig),
