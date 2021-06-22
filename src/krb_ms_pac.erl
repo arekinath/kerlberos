@@ -69,7 +69,7 @@ find_pac_ad([#'AuthorizationData_SEQOF'{'ad-type' = 128} = AD0 | _]) ->
     end;
 find_pac_ad([#'AuthorizationData_SEQOF'{'ad-type' = 1} = AD0 | Rest]) ->
     #'AuthorizationData_SEQOF'{'ad-data' = D0} = AD0,
-    case krb_proto:decode('AuthorizationData', D0) of
+    case krb_proto:decode(D0, ['AuthorizationData']) of
         {ok, InnerAD} ->
             find_pac_ad(Rest ++ InnerAD);
         Err ->
