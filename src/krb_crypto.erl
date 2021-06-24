@@ -125,6 +125,7 @@ ms_usage_a2i(gss_acceptor_seal) -> 0;
 ms_usage_a2i(gss_acceptor_sign) -> 0;
 ms_usage_a2i(gss_initiator_seal) -> 0;
 ms_usage_a2i(gss_initiator_sign) -> 0;
+ms_usage_a2i(gss_new_checksum) -> 0;
 ms_usage_a2i(Other) -> error({bad_usage, Other}).
 
 -include("krb_key_records.hrl").
@@ -447,7 +448,7 @@ one_time(rc4_hmac, Key, Data, Opts = #{encrypt := false}) ->
     <<MAC:16/binary, EncPart/binary>> = Data,
     K3 = crypto:mac(hmac, md5, K1, MAC),
     PlainPart = crypto:crypto_one_time(rc4, K3, EncPart, false),
-    <<Confounder:16/binary, Plain/binary>> = PlainPart,
+    <<Confounder:8/binary, Plain/binary>> = PlainPart,
     OurMAC = crypto:mac(hmac, md5, K2, [Confounder, Plain]),
     if
         (OurMAC =:= MAC) -> ok;
