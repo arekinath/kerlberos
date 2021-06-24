@@ -60,7 +60,7 @@
 
 -type oid() :: tuple().
 
--type options() :: #{mech_prefs => [oid()]} | gss_mechanism:general_options().
+-type options() :: #{mech_prefs => [oid()], init_token => boolean()} | gss_mechanism:general_options().
 
 -type state() :: gss_mechanism:state().
 -type token() :: gss_mechanism:token().
@@ -68,8 +68,8 @@
 
 -record(?MODULE, {
     party :: acceptor | initiator,
-    state :: running | initial | await_mech | await_token | accepted |
-        continue | err_next,
+    state :: running | initial | await_opt | await_opt_acc | await_mech |
+        await_token | accepted | continue | err_next,
     want_mic = false :: boolean(),
     config :: options(),
     mech :: none | oid(),
@@ -84,17 +84,72 @@
 
 spnego_initiator_fsm(initial, _, S0 = #?MODULE{config = Opts}) ->
     MechPrefs = maps:get(mech_prefs, Opts, ?default_mech_prefs),
-    TokenRec = #'NegTokenInit'{
-        mechTypes = MechPrefs
-        %negHints = #'NegHints'{
-        %    hintName = "not_defined_in_RFC4178@please_ignore"
-        %}
-    },
-    {ok, MechData} = 'SPNEGO':encode('NegotiationToken',
-        {'negTokenInit', TokenRec}),
-    Token = gss_token:encode_initial(?'id-mech-spnego', MechData),
-    S1 = S0#?MODULE{state = await_mech},
-    {continue, Token, S1};
+    InitToken = maps:get(init_token, Opts, true),
+    case InitToken of
+        true ->
+            [Mech | _] = MechPrefs,
+            #{Mech := Mod} = ?mechs,
+            S1 = S0#?MODULE{mech = Mech, mechmod = Mod},
+            case Mod:initiate(Opts) of
+                {ok, MToken0, MS0} ->
+                    TokenRec = #'NegTokenInit'{
+                        mechTypes = MechPrefs,
+                        mechToken = MToken0
+                    },
+                    {ok, MechData} = 'SPNEGO':encode('NegotiationToken',
+                        {'negTokenInit', TokenRec}),
+                    Token = gss_token:encode_initial(?'id-mech-spnego',
+                        MechData),
+                    S2 = S1#?MODULE{state = await_opt_acc, mechstate = MS0},
+                    {continue, Token, S2};
+                {continue, MToken0, MS0} ->
+                    TokenRec =  #'NegTokenInit'{
+                        mechTypes = MechPrefs,
+                        mechToken = MToken0
+                    },
+                    {ok, MechData} = 'SPNEGO':encode('NegotiationToken',
+                        {'negTokenInit', TokenRec}),
+                    Token = gss_token:encode_initial(?'id-mech-spnego',
+                        MechData),
+                    S2 = S1#?MODULE{state = await_opt, mechstate = MS0},
+                    {continue, Token, S2};
+                Err = {error, _Why} -> Err
+            end;
+        false ->
+            TokenRec = #'NegTokenInit'{
+                mechTypes = MechPrefs
+            },
+            {ok, MechData} = 'SPNEGO':encode('NegotiationToken',
+                {'negTokenInit', TokenRec}),
+            Token = gss_token:encode_initial(?'id-mech-spnego',
+                MechData),
+            S1 = S0#?MODULE{state = await_mech},
+            {continue, Token, S1}
+    end;
+spnego_initiator_fsm(await_opt_acc, T = #'NegTokenResp'{negState = 'reject'},
+                                                            S0 = #?MODULE{}) ->
+    spnego_initiator_fsm(continue, T, S0);
+spnego_initiator_fsm(await_opt, T = #'NegTokenResp'{negState = 'reject'},
+                                                            S0 = #?MODULE{}) ->
+    spnego_initiator_fsm(continue, T, S0);
+spnego_initiator_fsm(await_opt_acc, T = #'NegTokenResp'{}, S0 = #?MODULE{}) ->
+    #'NegTokenResp'{negState = NS, supportedMech = Mech} = T,
+    #?MODULE{config = Opts, mech = Mech0} = S0,
+    case Mech of
+        Mech0 ->
+            spnego_initiator_fsm(accepted, T, S0);
+        _ ->
+            spnego_initiator_fsm(await_mech, T, S0)
+    end;
+spnego_initiator_fsm(await_opt, T = #'NegTokenResp'{}, S0 = #?MODULE{}) ->
+    #'NegTokenResp'{negState = NS, supportedMech = Mech} = T,
+    #?MODULE{config = Opts, mech = Mech0} = S0,
+    case Mech of
+        Mech0 ->
+            spnego_initiator_fsm(continue, T, S0);
+        _ ->
+            spnego_initiator_fsm(await_mech, T, S0)
+    end;
 spnego_initiator_fsm(await_mech, T = #'NegTokenResp'{}, S0 = #?MODULE{}) ->
     #'NegTokenResp'{negState = NS, supportedMech = Mech} = T,
     #?MODULE{config = Opts} = S0,
@@ -123,7 +178,7 @@ spnego_initiator_fsm(await_mech, T = #'NegTokenResp'{}, S0 = #?MODULE{}) ->
                         {'negTokenResp', TokenRec}),
                     S2 = S1#?MODULE{state = accepted, mechstate = MS0,
                                     want_mic = false},
-                    {continue, Token, S2};
+                    {ok, Token, S2};
                 {continue, MToken0, MS0} ->
                     TokenRec = #'NegTokenResp'{
                         negState = 'accept-incomplete',
@@ -231,6 +286,10 @@ spnego_initiator_fsm(continue, T = #'NegTokenResp'{}, S0 = #?MODULE{}) ->
             end;
         false ->
             case Mod:continue(MToken0, MS0) of
+                {ok, MS1} when (NS =:= 'accept-completed') ->
+                    S1 = S0#?MODULE{state = running, mechstate = MS1},
+                    {ok, S1};
+
                 {ok, MS1} ->
                     TokenRec = #'NegTokenResp'{
                         negState = 'accept-completed'
@@ -247,8 +306,8 @@ spnego_initiator_fsm(continue, T = #'NegTokenResp'{}, S0 = #?MODULE{}) ->
                     },
                     {ok, Token} = 'SPNEGO':encode('NegotiationToken',
                         {'negTokenResp', TokenRec}),
-                    S1 = S0#?MODULE{state = accepted, mechstate = MS1},
-                    {continue, Token, S1};
+                    S1 = S0#?MODULE{state = running, mechstate = MS1},
+                    {ok, Token, S1};
 
                 {continue, MToken1, MS1} ->
                     TokenRec = #'NegTokenResp'{

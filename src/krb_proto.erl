@@ -92,6 +92,7 @@ make_error(Realm, Service, Code) ->
     renewuntil => krbtime(),
     realm => realm(),
     principal => [string()],
+    svc_realm => realm(),
     svc_principal => [string()],
     key => krb_crypto:base_key(),
     ticket => #'Ticket'{}}.
@@ -99,19 +100,22 @@ make_error(Realm, Service, Code) ->
 -type reply() :: #'KDC-REP'{'enc-part' :: #'EncKDCRepPart'{}}.
 
 -spec ticket_from_rep([string()], reply()) -> ticket().
-ticket_from_rep(Princ, #'KDC-REP'{ticket = T, 'enc-part' = EP = #'EncKDCRepPart'{}}) ->
+ticket_from_rep(Princ, KR = #'KDC-REP'{ticket = T, 'enc-part' = EP = #'EncKDCRepPart'{}}) ->
+    #'KDC-REP'{crealm = CRealm, cname = CName} = KR,
     #'EncKDCRepPart'{key = Key, flags = Flags, authtime = AuthTime,
-                     endtime = EndTime, srealm = Realm, sname = PrincName} = EP,
-    #'PrincipalName'{'name-type' = 2, 'name-string' = Principal} = PrincName,
+                     endtime = EndTime, srealm = SRealm, sname = SName} = EP,
+    #'PrincipalName'{'name-type' = 2, 'name-string' = SvcPrinc} = SName,
+    #'PrincipalName'{'name-type' = 1, 'name-string' = Princ} = CName,
     T0 = #{
-        principal => Princ,
         key => Key,
         ticket => T,
         flags => sets:to_list(Flags),
         authtime => iolist_to_binary([AuthTime]),
         endtime => iolist_to_binary([EndTime]),
-        realm => Realm,
-        svc_principal => Principal
+        realm => CRealm,
+        principal => Princ,
+        svc_realm => SRealm,
+        svc_principal => SvcPrinc
     },
     T1 = case EP of
         #'EncKDCRepPart'{starttime = asn1_NOVALUE} ->
@@ -144,7 +148,9 @@ ticket_from_rep(Princ, #'KDC-REP'{ticket = T, 'enc-part' = EP = #'EncKDCRepPart'
     {skip,12}]).
 
 -define(ap_flags, [
-    {skip, 29}, mutual, use_session_key, skip]).
+    {skip,2}, use_subkey, etype_negotiate, {skip, 4},
+    {skip,16},
+    {skip,5}, mutual, use_session_key, skip]).
 
 -type kdc_flag() :: forwardable | forwarded | proxiable | proxy |
     allow_postdate | postdated | renewable | pk_cross | hw_auth |
@@ -313,8 +319,8 @@ inner_decode(Type, Bin) ->
         {ok, EncPart, Rem} when byte_size(Rem) < 8 ->
             <<0:(bit_size(Rem))>> = Rem,
             post_decode(EncPart);
-        _ ->
-            error({bad_inner_data, Type})
+        Err ->
+            error({bad_inner_data, Type, Err})
     end.
 
 inner_decode_authenticator(Bin) ->

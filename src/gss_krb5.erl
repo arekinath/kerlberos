@@ -504,7 +504,7 @@ initiate(C) ->
     #{chan_bindings := Bindings0, ticket := TicketInfo} = C,
     Deleg = maps:get(delegate, C, false),
     Mutual = maps:get(mutual_auth, C, false),
-    #{realm := Realm, key := Key, ticket := Ticket,
+    #{realm := CRealm, key := Key, ticket := Ticket, svc_realm := SRealm,
       principal := UserPrinc} = TicketInfo,
 
     #'Ticket'{sname = Them} = Ticket,
@@ -534,7 +534,7 @@ initiate(C) ->
     end,
     CKey = krb_crypto:base_key_to_ck_key(Key),
     CksumData2 = case krb_crypto:key_ctype(CKey) of
-        CT when (CT =:= crc) or (CT =:= md5) or (CT =:= hmac_md5) ->
+        CT when (CT =:= crc) or (CT =:= md5) ->
             CksumData1;
         _ ->
             KrbMic = krb_crypto:checksum(CKey, Bindings1,
@@ -549,7 +549,7 @@ initiate(C) ->
     },
     Auth = #'Authenticator'{
         'authenticator-vno' = 5,
-        crealm = Realm,
+        crealm = CRealm,
         cname = Us,
         ctime = NowKrb,
         cusec = USec,
@@ -558,8 +558,8 @@ initiate(C) ->
         subkey = SessKey
     },
     APOptions = case Mutual of
-        true -> [use_session_key, mutual];
-        false -> [use_session_key]
+        true -> [use_subkey, etype_negotiate, use_session_key, mutual];
+        false -> [use_subkey, use_session_key]
     end,
     APReq0 = #'AP-REQ'{
         pvno = 5,
@@ -574,8 +574,8 @@ initiate(C) ->
     Token = gss_token:encode_initial(?'id-mech-krb5', MechData),
 
     S0 = #?MODULE{party = initiator, opts = C, nonce = Nonce, tktkey = Key,
-        ikey = SessKey, seq = Nonce, rseq = Nonce, them = {Realm, Them},
-        us = {Realm, Us}},
+        ikey = SessKey, seq = Nonce, rseq = Nonce, them = {SRealm, Them},
+        us = {CRealm, Us}},
     case Mutual of
         true ->
             {continue, Token, S0#?MODULE{continue = initiate}};
@@ -866,22 +866,19 @@ continue(Token, S0 = #?MODULE{continue = initiate, party = initiator}) ->
                     case krb_proto:decrypt(Key, ap_rep_encpart, APRep0) of
                         {ok, APRep1} ->
                             #'AP-REP'{'enc-part' = EP} = APRep1,
-                            #'EncAPRepPart'{'seq-number' = Nonce} = EP,
+                            #'EncAPRepPart'{'seq-number' = RSeq0} = EP,
                             #'EncAPRepPart'{'subkey' = NewKey} = EP,
                             case NewKey of
                                 asn1_NOVALUE ->
-                                    {ok, S0#?MODULE{continue = undefined}};
+                                    {ok, S0#?MODULE{continue = undefined,
+                                                    rseq = RSeq0}};
                                 _ ->
                                     {ok, S0#?MODULE{continue = undefined,
-                                                    ackey = NewKey}}
+                                                    ackey = NewKey,
+                                                    rseq = RSeq0}}
                             end;
                         {error, Why} ->
-                            #{ticket :=
-                              #{realm := Realm, svc_principal := Service}} = C,
-                            ErrToken = encode_token(
-                                krb_proto:make_generic_error(Realm, Service,
-                                                             Why)),
-                            {continue, ErrToken, S0#?MODULE{continue = error}}
+                            {error, Why}
                     end;
                 _Other ->
                     #{ticket :=
@@ -896,7 +893,28 @@ continue(Token, S0 = #?MODULE{continue = initiate, party = initiator}) ->
             {error, {bad_mech, OtherOid}}
     end;
 continue(_Token, S0 = #?MODULE{continue = error}) ->
-    {error, defective_token, S0}.
+    {error, defective_token, S0};
+continue(Token, S0 = #?MODULE{}) ->
+    case (catch gss_token:decode_initial(Token)) of
+        {'EXIT', Reason} ->
+            {error, {defective_token, Reason}};
+        {?'id-mech-krb5', MechData, <<>>} ->
+            case (catch decode_token(MechData)) of
+                {'EXIT', Reason} ->
+                    {error, {defective_token, Reason}};
+                #'KRB-ERROR'{'error-code' = 'KRB_ERR_GENERIC',
+                             'e-text' = Txt} ->
+                    {error, {krb_error, {generic, Txt}}};
+                #'KRB-ERROR'{'error-code' = EC} ->
+                    {error, {krb_error, EC}};
+                _Other ->
+                    {error, bad_state}
+            end;
+        {?'id-mech-krb5', _MechData, Extra} ->
+            {error, {defective_token, {extra_bytes, Extra}}};
+        {OtherOid, _, _} ->
+            {error, {bad_mech, OtherOid}}
+    end.
 
 %% @doc Destroys a GSS context, producing a token informing the other party
 %% (if the mechanism supports it).
