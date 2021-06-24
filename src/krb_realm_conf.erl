@@ -116,26 +116,52 @@ configure(Realm, UserConf) ->
 
 -spec lookup_kdcs(config(), string()) -> config().
 lookup_kdcs(C0, Domain) ->
-    {ok, Msg} = inet_res:resolve("_kerberos._udp." ++ Domain, in, srv),
-    Answers = inet_dns:msg(Msg, anlist),
-    Srvs = lists:foldl(fun (RR, Acc) ->
-        case {inet_dns:rr(RR, class), inet_dns:rr(RR, type)} of
-            {in, srv} ->
-                TTL = inet_dns:rr(RR, ttl),
-                Data = inet_dns:rr(RR, data),
-                [{TTL, Data} | Acc];
-            _ ->
-                Acc
-        end
-    end, [], Answers),
-    MinTTL0 = lists:min([TTL || {TTL, _Srv} <- Srvs]),
-    MinTTL1 = case C0 of
-        #{ttl := OtherTTL} when (OtherTTL < MinTTL0) -> OtherTTL;
-        _ -> MinTTL0
-    end,
-    #{kdc := Kdc0} = C0,
-    DNSKDCs = [{Name, Port} || {_TTL, {_Prio, _Weight, Port, Name}} <- Srvs],
-    C0#{ttl => MinTTL1, kdc => Kdc0 ++ DNSKDCs}.
+    R = inet_res:resolve("_kerberos._udp." ++ Domain, in, srv,
+        [{nxdomain_reply, true}]),
+    case R of
+        {ok, Msg} ->
+            Answers = inet_dns:msg(Msg, anlist),
+            Srvs = lists:foldl(fun (RR, Acc) ->
+                case {inet_dns:rr(RR, class), inet_dns:rr(RR, type)} of
+                    {in, srv} ->
+                        TTL = inet_dns:rr(RR, ttl),
+                        Data = inet_dns:rr(RR, data),
+                        [{TTL, Data} | Acc];
+                    _ ->
+                        Acc
+                end
+            end, [], Answers),
+            MinTTL0 = lists:min([TTL || {TTL, _Srv} <- Srvs]),
+            MinTTL1 = case C0 of
+                #{ttl := OtherTTL} when (OtherTTL < MinTTL0) -> OtherTTL;
+                _ -> MinTTL0
+            end,
+            #{kdc := Kdc0} = C0,
+            DNSKDCs = [{Name, Port} ||
+                {_TTL, {_Prio, _Weight, Port, Name}} <- Srvs],
+            C0#{ttl => MinTTL1, kdc => Kdc0 ++ DNSKDCs};
+        {error, {_Why, Msg}} ->
+            NSs = inet_dns:msg(Msg, nslist),
+            TTLs0 = lists:foldl(fun (RR, Acc) ->
+                case {inet_dns:rr(RR, class), inet_dns:rr(RR, type)} of
+                    {in, soa} ->
+                        TTL = inet_dns:rr(RR, ttl),
+                        [TTL | Acc];
+                    _ ->
+                        Acc
+                end
+            end, [], NSs),
+            TTLs1 = case C0 of
+                #{ttl := TTL} -> [TTL | TTLs0];
+                _ -> TTLs0
+            end,
+            case TTLs1 of
+                [] -> C0;
+                _ -> C0#{ttl => lists:min(TTLs1)}
+            end;
+        {error, _} ->
+            C0
+    end.
 
 -spec add_realm_conf(config(), [string()], binary()) -> config().
 add_realm_conf(C0, [], _Realm) -> C0;
