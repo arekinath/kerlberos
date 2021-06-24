@@ -30,6 +30,7 @@
 
 -export([
     parse/1,
+    file/1,
     filter_for_ticket/2
     ]).
 
@@ -66,6 +67,16 @@ filter_for_ticket(KeyTab, #'Ticket'{realm = Realm, sname = SvcName,
     case Matches of
         [_ | _] -> {ok, Matches};
         _ -> {error, not_found}
+    end.
+
+%% @doc Reads and parses the given filename as an MIT-format keytab.
+-spec file(string()) -> {ok, [keytab_entry()]} | {error, term()}.
+file(Filename) ->
+    case file:read_file(Filename) of
+        {ok, Data} ->
+            parse(Data);
+        Err = {err, _} ->
+            Err
     end.
 
 %% @doc Parses an MIT-format keytab file.
