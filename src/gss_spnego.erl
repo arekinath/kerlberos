@@ -133,8 +133,8 @@ spnego_initiator_fsm(await_opt, T = #'NegTokenResp'{negState = 'reject'},
                                                             S0 = #?MODULE{}) ->
     spnego_initiator_fsm(continue, T, S0);
 spnego_initiator_fsm(await_opt_acc, T = #'NegTokenResp'{}, S0 = #?MODULE{}) ->
-    #'NegTokenResp'{negState = NS, supportedMech = Mech} = T,
-    #?MODULE{config = Opts, mech = Mech0} = S0,
+    #'NegTokenResp'{supportedMech = Mech} = T,
+    #?MODULE{mech = Mech0} = S0,
     case Mech of
         Mech0 ->
             spnego_initiator_fsm(accepted, T, S0);
@@ -142,8 +142,8 @@ spnego_initiator_fsm(await_opt_acc, T = #'NegTokenResp'{}, S0 = #?MODULE{}) ->
             spnego_initiator_fsm(await_mech, T, S0)
     end;
 spnego_initiator_fsm(await_opt, T = #'NegTokenResp'{}, S0 = #?MODULE{}) ->
-    #'NegTokenResp'{negState = NS, supportedMech = Mech} = T,
-    #?MODULE{config = Opts, mech = Mech0} = S0,
+    #'NegTokenResp'{supportedMech = Mech} = T,
+    #?MODULE{mech = Mech0} = S0,
     case Mech of
         Mech0 ->
             spnego_initiator_fsm(continue, T, S0);

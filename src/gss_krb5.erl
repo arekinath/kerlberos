@@ -849,7 +849,7 @@ accept_send_rep(A = #'Authenticator'{}, S0 = #?MODULE{opts = C}) ->
     {ok, state()} |
     gss_mechanism:fatal_error().
 continue(Token, S0 = #?MODULE{continue = initiate, party = initiator}) ->
-    #?MODULE{opts = C, nonce = Nonce, tktkey = Key} = S0,
+    #?MODULE{opts = C, tktkey = Key} = S0,
     case (catch gss_token:decode_initial(Token)) of
         {'EXIT', Reason} ->
             {error, {defective_token, Reason}};
@@ -894,7 +894,7 @@ continue(Token, S0 = #?MODULE{continue = initiate, party = initiator}) ->
     end;
 continue(_Token, S0 = #?MODULE{continue = error}) ->
     {error, defective_token, S0};
-continue(Token, S0 = #?MODULE{}) ->
+continue(Token, _S0 = #?MODULE{}) ->
     case (catch gss_token:decode_initial(Token)) of
         {'EXIT', Reason} ->
             {error, {defective_token, Reason}};
