@@ -304,7 +304,7 @@ decrypt(Ks, Usage, R0 = #'AP-REQ'{'authenticator' = EP}) ->
 decrypt(Ks, Usage, R0 = #'Ticket'{'enc-part' = EP}) ->
     case decrypt(Ks, Usage, EP) of
         {ok, Plain} ->
-            case (catch inner_decode('EncTicketPart', Plain)) of
+            case (catch inner_decode_ticket(Plain)) of
                 {'EXIT', Why} ->
                     {error, {inner_decode, Why}};
                 Inner ->
@@ -321,6 +321,31 @@ inner_decode(Type, Bin) ->
             post_decode(EncPart);
         Err ->
             error({bad_inner_data, Type, Err})
+    end.
+
+inner_decode_ticket(Bin) ->
+    case 'KRB5':decode('EncTicketPart', Bin) of
+        {ok, EncPart, Rem} when byte_size(Rem) < 8 ->
+            <<0:(bit_size(Rem))>> = Rem,
+            post_decode(EncPart);
+        _ ->
+            case Bin of
+                <<16#A0, 7, 3, 5, _/binary>> ->
+                    % encticketpart without the app 3 seq tags
+                    Len = asn1_encode_length(byte_size(Bin)),
+                    WithSeq = <<16#30, Len/binary, Bin/binary>>,
+                    Len2 = asn1_encode_length(byte_size(WithSeq)),
+                    WithApp = <<16#63, Len2/binary, WithSeq/binary>>,
+                    case 'KRB5':decode('EncTicketPart', WithApp) of
+                        {ok, EncPart, Rem} when byte_size(Rem) < 8 ->
+                            <<0:(bit_size(Rem))>> = Rem,
+                            post_decode(EncPart);
+                        _ ->
+                            error({bad_inner_data, 'EncTicketPart'})
+                    end;
+                _ ->
+                    error({bad_inner_data, 'EncTicketPart'})
+            end
     end.
 
 inner_decode_authenticator(Bin) ->
@@ -434,7 +459,16 @@ encrypt(K, Usage, R0 = #'PA-DATA'{'padata-value' = V0 = #'PA-ENC-TS-ENC'{}}) ->
         cipher = Ciphertext
     },
     {ok, V1} = encode('EncryptedData', ED),
-    R0#'PA-DATA'{'padata-type' = 2, 'padata-value' = V1}.
+    R0#'PA-DATA'{'padata-type' = 2, 'padata-value' = V1};
+encrypt(K, Usage, R0 = #'Ticket'{'enc-part' = #'EncTicketPart'{} = EP}) ->
+    #krb_base_key{etype = EType} = K,
+    {ok, Plaintext} = encode('EncTicketPart', EP),
+    Ciphertext = krb_crypto:encrypt(K, Plaintext, #{usage => Usage}),
+    ED = #'EncryptedData'{
+        etype = krb_crypto:atom_to_etype(EType),
+        cipher = Ciphertext
+    },
+    R0#'Ticket'{'enc-part' = ED}.
 
 -spec checksum(krb_crypto:ck_key(), krb_crypto:usage(), #'KDC-REQ-BODY'{} | binary()) -> #'Checksum'{}.
 checksum(CK, Usage, B = #'KDC-REQ-BODY'{}) ->
@@ -457,6 +491,10 @@ asn1_encode_length(L) ->
     Bytes = binary:encode_unsigned(L),
     <<1:1, (byte_size(Bytes)):7, Bytes/binary>>.
 
+pre_encode(T = #'EncTicketPart'{flags = F0, key = K0}) ->
+    F1 = encode_bit_flags(F0, ?ticket_flags),
+    K1 = pre_encode(K0),
+    T#'EncTicketPart'{flags = F0, key = K1};
 pre_encode(RP = #'EncAPRepPart'{subkey = K}) ->
     RP#'EncAPRepPart'{subkey = pre_encode(K)};
 pre_encode(T = #'Ticket'{'enc-part' = EP}) ->
