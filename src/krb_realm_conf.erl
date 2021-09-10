@@ -183,7 +183,7 @@ add_realm_conf(C0, [Path | Rest], Realm) ->
                                     rc4_hmac_exp, des_md5, des_md4, des_crc]
                             end,
                             C0#{ciphers => Cph1};
-                        <<"false">> ->
+                        _ ->
                             #{ciphers := Cph0} = C0,
                             Cph1 = Cph0 -- [des_crc, des_md4, des_md5,
                                 des3_sha1_nokd, des3_md5, rc4_hmac,
@@ -211,10 +211,10 @@ add_realm_conf(C0, [Path | Rest], Realm) ->
                             C1#{kdc => Kdc1}
                     end,
                     C3 = case proplists:get_value(<<"dns_lookup_kdc">>, Combined) of
-                        <<"true">> ->
-                            C2#{use_dns => true};
                         <<"false">> ->
-                            C2#{use_dns => false}
+                            C2#{use_dns => false};
+                        _ ->
+                            C2#{use_dns => true}
                     end,
                     add_realm_conf(C3, Rest, Realm);
                 _ ->
