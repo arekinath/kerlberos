@@ -45,7 +45,8 @@
     retry/3,
     delay/3,
     err/3,
-    err_delay/3
+    err_delay/3,
+    ping/3
     ]).
 
 -type realm() :: string().
@@ -54,7 +55,7 @@
 -type msecs() :: integer().
 -type retry_config() :: #{
     retries => integer(), timeout => msecs(), delay => msecs(),
-    max_timeout => msecs(), max_delay => msecs()
+    max_timeout => msecs(), max_delay => msecs(), ping_timeout => msecs()
     }.
 
 -spec start_link(pid(), realm(), hostname(), udpport(), retry_config()) -> {ok, pid()}.
@@ -73,15 +74,19 @@ start_link(ClientFSM, Realm, Host, Port, RConfig) ->
     usock :: gen_udp:socket() | undefined,
     pkt :: undefined | binary(),
     expect = [] :: [atom()],
-    sendref :: undefined | reference()
+    sendref :: undefined | reference(),
+    ping :: msecs(),
+    firstping = false :: boolean()
     }).
 
 -define(udp_options, [binary, {active, true}]).
 
 init([ClientFSM, Realm, Host, Port, RConfig]) ->
     #{retries := Retries, timeout := Timeout, delay := Delay} = RConfig,
+    Ping = maps:get(ping_timeout, RConfig, 60000),
     S0 = #?MODULE{cfsm = ClientFSM, realm = Realm, host = Host, port = Port,
-        config = RConfig, timeout = Timeout, retries = Retries, delay = Delay},
+        config = RConfig, timeout = Timeout, retries = Retries, delay = Delay,
+        ping = Ping},
     {ok, USock} = gen_udp:open(0, ?udp_options),
     S1 = S0#?MODULE{usock = USock},
     {ok, idle, S1}.
@@ -113,8 +118,12 @@ incr_retry(S0 = #?MODULE{config = RConfig, retries = R0, timeout = T0, delay = D
     end,
     S0#?MODULE{retries = R1, timeout = T2, delay = D2}.
 
-idle(enter, _PrevState, _S0 = #?MODULE{}) ->
-    keep_state_and_data;
+idle(enter, _PrevState, S0 = #?MODULE{firstping = false}) ->
+    {keep_state, S0, [{state_timeout, 0, ping}]};
+idle(enter, _PrevState, S0 = #?MODULE{ping = Ping}) ->
+    {keep_state, S0, [{state_timeout, Ping, ping}]};
+idle(state_timeout, ping, S0 = #?MODULE{}) ->
+    {next_state, ping, S0};
 idle(info, {udp, Sock, IP, Port, Data}, _S0 = #?MODULE{usock = Sock}) ->
     lager:debug("unsolicited udp packet from ~p:~p (~B bytes)",
         [IP, Port, byte_size(Data)]),
@@ -152,7 +161,10 @@ retry(info, {udp, Sock, _IP, Port, Data}, S0 = #?MODULE{usock = Sock,
                                                         sendref = Ref}) ->
     case krb_proto:decode(Data, Es) of
         {ok, Msg} ->
-            ClientFSM ! {krb_reply, Ref, Msg},
+            case Ref of
+                undefined -> ok;
+                _ -> ClientFSM ! {krb_reply, Ref, Msg}
+            end,
             S1 = S0#?MODULE{pkt = undefined, expect = [], sendref = undefined},
             {next_state, idle, S1};
         {error, not_decoded} ->
@@ -177,8 +189,8 @@ err({call, From}, _Msg, _S0 = #?MODULE{}) ->
 err(enter, _PrevState, S0 = #?MODULE{}) ->
     {keep_state, S0, [{state_timeout, 0, entry}]};
 err(state_timeout, entry, S0 = #?MODULE{realm = Realm, usock = Sock,
-                                       host = H, port = P, timeout = T0,
-                                       sendref = undefined}) ->
+                                        host = H, port = P, timeout = T0,
+                                        sendref = undefined}) ->
     Options = sets:from_list([renewable,proxiable,forwardable]),
     ReqBody = #'KDC-REQ-BODY'{
         'kdc-options' = krb_proto:encode_kdc_flags(Options),
@@ -241,3 +253,38 @@ err_delay(enter, _PrevState, S0 = #?MODULE{delay = D0}) ->
     {keep_state, S0, [{state_timeout, D0, limit}]};
 err_delay(state_timeout, limit, S0 = #?MODULE{}) ->
     {next_state, err, S0}.
+
+ping({call, _From}, _Msg, _S0 = #?MODULE{}) ->
+    {keep_state_and_data, [postpone]};
+ping(enter, _PrevState, S0 = #?MODULE{}) ->
+    {keep_state, S0, [{state_timeout, 0, send}]};
+ping(state_timeout, send, S0 = #?MODULE{usock = Sock, ping = T0,
+                                        realm = Realm, host = H}) ->
+    Options = sets:from_list([renewable,proxiable,forwardable]),
+    ReqBody = #'KDC-REQ-BODY'{
+        'kdc-options' = krb_proto:encode_kdc_flags(Options),
+        cname = #'PrincipalName'{
+            'name-type' = 11,
+            'name-string' = ["WELLKNOWN", "ANONYMOUS"]},
+        sname = #'PrincipalName'{
+            'name-type' = 2,
+            'name-string' = ["krbtgt", Realm]},
+        realm = Realm,
+        till = krb_proto:system_time_to_krbtime(
+            erlang:system_time(second) + 4*3600, second),
+        nonce = rand:uniform(1 bsl 30),
+        etype = [des_crc]
+    },
+    Req = #'KDC-REQ'{
+        pvno = 5,
+        'msg-type' = 10,
+        padata = [],
+        'req-body' = ReqBody
+    },
+    {ok, Bytes} = krb_proto:encode('AS-REQ', Req),
+    S1 = reset_retries(S0#?MODULE{expect = ['AS-REP', 'KRB-ERROR'],
+                                  pkt = Bytes,
+                                  sendref = undefined,
+                                  firstping = true}),
+    {next_state, retry, S1}.
+
