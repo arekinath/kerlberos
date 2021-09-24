@@ -260,7 +260,7 @@ err_connect(state_timeout, connect, S0 = #?MODULE{host = H, port = P,
 ping({call, _From}, _Msg, _S0 = #?MODULE{}) ->
     {keep_state_and_data, [postpone]};
 ping(enter, _PrevState, S0 = #?MODULE{tsock = Sock, ping_timeout = T0,
-                                      realm = Realm, host = H}) ->
+                                      realm = Realm}) ->
     Options = sets:from_list([renewable,proxiable,forwardable]),
     ReqBody = #'KDC-REQ-BODY'{
         'kdc-options' = krb_proto:encode_kdc_flags(Options),

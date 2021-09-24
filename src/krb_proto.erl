@@ -494,7 +494,7 @@ asn1_encode_length(L) ->
 pre_encode(T = #'EncTicketPart'{flags = F0, key = K0}) ->
     F1 = encode_bit_flags(F0, ?ticket_flags),
     K1 = pre_encode(K0),
-    T#'EncTicketPart'{flags = F0, key = K1};
+    T#'EncTicketPart'{flags = F1, key = K1};
 pre_encode(RP = #'EncAPRepPart'{subkey = K}) ->
     RP#'EncAPRepPart'{subkey = pre_encode(K)};
 pre_encode(T = #'Ticket'{'enc-part' = EP}) ->

@@ -258,8 +258,7 @@ ping({call, _From}, _Msg, _S0 = #?MODULE{}) ->
     {keep_state_and_data, [postpone]};
 ping(enter, _PrevState, S0 = #?MODULE{}) ->
     {keep_state, S0, [{state_timeout, 0, send}]};
-ping(state_timeout, send, S0 = #?MODULE{usock = Sock, ping = T0,
-                                        realm = Realm, host = H}) ->
+ping(state_timeout, send, S0 = #?MODULE{realm = Realm}) ->
     Options = sets:from_list([renewable,proxiable,forwardable]),
     ReqBody = #'KDC-REQ-BODY'{
         'kdc-options' = krb_proto:encode_kdc_flags(Options),
