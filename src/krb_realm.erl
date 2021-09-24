@@ -177,7 +177,27 @@ handle_call({authenticate, Princ, Secret, Opts}, _From,
     C1 = maps:merge(C0, Opts),
     C2 = C1#{realm => R, principal => Princ, secret => Secret},
     Ret = krb_auth_fsm:start_link_and_await(C2, PS0),
-    {reply, Ret, S0};
+    case Ret of
+        {error, no_matching_etypes} ->
+            % Some KDCs don't handle being asked about the new SHA2 etypes
+            % very well. Strip them out if we get a no_matching_etypes and
+            % try again, just in case.
+            ETypes = maps:get(etypes, C2, krb_crypto:default_etypes()),
+            Members = {lists:member(aes128_hmac_sha256, ETypes),
+                       lists:member(aes256_hmac_sha384, ETypes)},
+            case Members of
+                {A, B} when A or B ->
+                    NewEtypes = ETypes -- [aes128_hmac_sha256,
+                        aes256_hmac_sha384],
+                    C3 = C2#{etypes => NewEtypes},
+                    Ret2 = krb_auth_fsm:start_link_and_await(C3, PS0),
+                    {reply, Ret2, S0};
+                _ ->
+                    {reply, Ret, S0}
+            end;
+        _ ->
+            {reply, Ret, S0}
+    end;
 
 handle_call({obtain_ticket, TGT, Princ, Opts}, _From,
                     S0 = #?MODULE{config = C0, protosrv = PS0, realm = R}) ->
