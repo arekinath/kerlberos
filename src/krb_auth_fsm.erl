@@ -217,6 +217,8 @@ auth(state_timeout, req, S0 = #?MODULE{proto = P, config = C, salt = S,
     USec = NowUSec rem 1000,
     NowKrb = krb_proto:system_time_to_krbtime(NowMSec, millisecond),
 
+    ETypes = maps:get(etypes, C, krb_crypto:default_etypes()),
+
     ReqBody = #'KDC-REQ-BODY'{
         'kdc-options' = krb_proto:encode_kdc_flags(Options),
         cname = #'PrincipalName'{
@@ -229,7 +231,7 @@ auth(state_timeout, req, S0 = #?MODULE{proto = P, config = C, salt = S,
         till = krb_proto:system_time_to_krbtime(
             erlang:system_time(second) + Lifetime, second),
         nonce = Nonce,
-        etype = [krb_crypto:atom_to_etype(ET)]
+        etype = ETypes
     },
     PAEncTs0 = #'PA-DATA'{
         'padata-value' = #'PA-ENC-TS-ENC'{
