@@ -995,7 +995,7 @@ rfc8009_sample_decrypt_5b_test() ->
     Output = base64:decode(<<"hNfzB1TtmHurC/NQa+sJz7VUAs735od86Z4kflLRbtRCHf34l2w=">>),
     BaseKey = #krb_base_key{etype = aes128_hmac_sha256,
                             key = base64:decode(<<"NwXZYIDBdyig6ADqtuDSPA==">>)},
-    Input = decrypt(BaseKey, Output, #{usage => 2}),
+    Input = decrypt(BaseKey, Output, #{usage => kdc_rep_ticket}),
     ?assertMatch(<<0,1,2,3,4,5>>, Input).
 
 rfc8009_sample_decrypt_256_test() ->
@@ -1005,45 +1005,45 @@ rfc8009_sample_decrypt_256_test() ->
         key = base64:decode(<<"bUBNN/r3n53w0zVo0yBmmADrSDZHLqigJtFrcYJGDFI=">>)
     },
     Input = base64:decode(<<"AAECAwQFBgcICQoLDA0ODxAREhMU">>),
-    ?assertMatch(Input, decrypt(Key, Output, #{usage => 2})).
+    ?assertMatch(Input, decrypt(Key, Output, #{usage => kdc_rep_ticket})).
 
 pcap_1_test() ->
     Output = base64:decode(<<"Les525C4ZmMX+IsZRTf0ULeqLMbn6tEOZQdxcSfqH2DKIt4ngmsy55C1zDXhCYEYXlvBKMQKyWVgA8n/">>),
     BaseKey = string_to_key(des3_sha1, <<"root">>, <<"EXAMPLE.COMrootadmin">>),
-    Decrypted = decrypt(BaseKey, Output, #{usage => 1}),
+    Decrypted = decrypt(BaseKey, Output, #{usage => as_req_pa_enc_ts}),
     Actual = base64:decode(<<"MBqgERgPMjAyMTA1MTcwNTIxMjZaoQUCAwSCcgAAAAA=">>),
     ?assertMatch(Actual, Decrypted).
 
 loopback_test() ->
     Input = <<"foobar">>,
     BaseKey = string_to_key(des3_sha1, <<"foo">>, <<"EXAMPLE.COMfoo">>),
-    Encrypted = encrypt(BaseKey, Input, #{usage => 1}),
-    Decrypted = decrypt(BaseKey, Encrypted, #{usage => 1}),
+    Encrypted = encrypt(BaseKey, Input, #{usage => as_req_pa_enc_ts}),
+    Decrypted = decrypt(BaseKey, Encrypted, #{usage => as_req_pa_enc_ts}),
     ?assertMatch(<<Input:(byte_size(Input))/binary, _/binary>>, Decrypted).
 
 loopback_2_test() ->
     Input = <<"foobar">>,
     BaseKey = string_to_key(aes128_hmac_sha256, <<"foo">>, <<"EXAMPLE.COMfoo">>),
-    Encrypted = encrypt(BaseKey, Input, #{usage => 1}),
-    Decrypted = decrypt(BaseKey, Encrypted, #{usage => 1}),
+    Encrypted = encrypt(BaseKey, Input, #{usage => as_req_pa_enc_ts}),
+    Decrypted = decrypt(BaseKey, Encrypted, #{usage => as_req_pa_enc_ts}),
     ?assertMatch(Input, Decrypted).
 
 pcap_2_test() ->
     Output = base64:decode(<<"K40hf8zUDGP+I/8kW6JRW9qve26CFr+86jdfL912V+n3A0eviW49tCYirQFHdP2odOn5uqy+zw==">>),
     BaseKey = string_to_key(aes256_hmac_sha1, <<"root">>, <<"EXAMPLE.COMroot">>),
     Input = base64:decode(<<"MBmgERgPMjAyMTA1MTgwMzU2MDZaoQQCAgMh">>),
-    ?assertMatch(Input, decrypt(BaseKey, Output, #{usage => 1})).
+    ?assertMatch(Input, decrypt(BaseKey, Output, #{usage => as_req_pa_enc_ts})).
 
 pcap_3_test() ->
     Output = base64:decode(<<"zywlQYED3qgionoqmuNPa3VPJp9a2347o5NDGAyD+Qq14JglvsyJOw==">>),
     BaseKey = string_to_key(des_crc, <<"root">>, <<"EXAMPLE.COMroot">>),
     Input = base64:decode(<<"MBmgERgPMjAyMTA1MTgwNDAwMzVaoQQCAgEqAA==">>),
-    ?assertMatch(Input, decrypt(BaseKey, Output, #{usage => 1})).
+    ?assertMatch(Input, decrypt(BaseKey, Output, #{usage => as_req_pa_enc_ts})).
 
 pcap_4_test() ->
     Output = base64:decode(<<"VB8utLYRqScFZiSEO/8nwACAcBMCPKLaChTgmOr8hGRoftvqiKI7MxFs/nz74FsjTQmydgr4OsNsfJ9i">>),
     BaseKey = string_to_key(aes128_hmac_sha256, <<"root">>, <<"EXAMPLE.COMroot">>),
     Input = base64:decode(<<"MBqgERgPMjAyMTA1MTgwNDE2NTNaoQUCAwr2Cg==">>),
-    ?assertMatch(Input, decrypt(BaseKey, Output, #{usage => 1})).
+    ?assertMatch(Input, decrypt(BaseKey, Output, #{usage => as_req_pa_enc_ts})).
 
 -endif.

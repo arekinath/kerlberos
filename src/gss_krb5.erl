@@ -324,13 +324,13 @@ encrypt_wrap_token(Key, Usage, FlagSet, Seq, Data) ->
     #wrap_token_v2{flags = FlagSet, seq = Seq, ec = byte_size(Padding),
                    rrc = 0, edata = Enc}.
 
-decrypt_wrap_token(Key, Usage, T = #wrap_token_v2{edata = Enc, ec = EC,
+decrypt_wrap_token(Key, Usage, T = #wrap_token_v2{edata = Enc0, ec = EC,
                                                   rrc = RRC}) ->
     Header = encode_token(T#wrap_token_v2{rrc = 0, edata = <<>>}),
-    Dec0 = krb_crypto:decrypt(Key, Enc, #{usage => Usage}),
+    Enc1 = unrotate_bytes(Enc0, RRC),
+    Dec0 = krb_crypto:decrypt(Key, Enc1, #{usage => Usage}),
     DataLen = byte_size(Dec0) - byte_size(Header) - EC,
-    Dec1 = rotate_bytes(Dec0, RRC),
-    <<Data:DataLen/binary, 0:EC/unit:8, Header/binary>> = Dec1,
+    <<Data:DataLen/binary, 0:EC/unit:8, Header/binary>> = Dec0,
     Data.
 
 des_pad_block(B) ->
@@ -443,12 +443,12 @@ encrypt_v1_wrap_token(Key, Sender, Seq, Data) ->
         true),
     T0#wrap_token_v1{checksum = Checksum, seq_enc = SeqNoEnc}.
 
-rotate_bytes(Bin, 0) ->
+unrotate_bytes(Bin, 0) ->
     Bin;
-rotate_bytes(Bin, N) ->
+unrotate_bytes(Bin, N) ->
     Take = N rem byte_size(Bin),
-    iolist_to_binary([binary:part(Bin, byte_size(Bin) - Take, Take),
-                      binary:part(Bin, 0, byte_size(Bin) - Take)]).
+    iolist_to_binary([binary:part(Bin, Take, byte_size(Bin) - Take),
+                      binary:part(Bin, 0, Take)]).
 
 -define(cksum_flags, #{
     delegate => {1, false},
@@ -1124,3 +1124,25 @@ verify_mic(Message, Token, S0 = #?MODULE{continue = undefined}) ->
         _ ->
             {error, defective_token, S0}
     end.
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+rotate_bytes(Bin, 0) ->
+    Bin;
+rotate_bytes(Bin, N) ->
+    Take = N rem byte_size(Bin),
+    iolist_to_binary([binary:part(Bin, byte_size(Bin) - Take, Take),
+                      binary:part(Bin, 0, byte_size(Bin) - Take)]).
+
+rotate_bytes_test() ->
+    Bytes0 = <<1,2,3,4,5,6,7,8>>,
+    ?assertMatch(<<7,8,1,2,3,4,5,6>>, rotate_bytes(Bytes0, 2)),
+    ?assertMatch(<<3,4,5,6,7,8,1,2>>, unrotate_bytes(Bytes0, 2)).
+
+rotate_bytes_wrap_test() ->
+    Bytes0 = <<1,2,3,4,5,6,7,8>>,
+    ?assertMatch(<<6,7,8,1,2,3,4,5>>, rotate_bytes(Bytes0, 11)),
+    ?assertMatch(Bytes0, unrotate_bytes(<<6,7,8,1,2,3,4,5>>, 11)).
+
+-endif.
