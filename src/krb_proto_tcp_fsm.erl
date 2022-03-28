@@ -222,7 +222,7 @@ retry(info, {tcp, Sock, Data}, S0 = #?MODULE{tsock = Sock, cfsm = ClientFSM,
             S1 = S0#?MODULE{pkt = undefined, expect = [], sendref = undefined},
             {next_state, idle, S1};
         {error, not_decoded} ->
-            lager:debug("[~p] got unparseable response, retrying",
+            lager:debug("[~p] got unparsable response, retrying",
                 [H]),
             gen_tcp:close(Sock),
             S1 = S0#?MODULE{tsock = undefined},
@@ -312,7 +312,7 @@ ping(info, {tcp, Sock, Data}, S0 = #?MODULE{tsock = Sock, host = H}) ->
         {ok, _Msg} ->
             {next_state, idle, S0};
         {error, not_decoded} ->
-            lager:debug("[~p] got unparseable response to ping", [H]),
+            lager:debug("[~p] got unparsable response to ping", [H]),
             gen_tcp:close(Sock),
             S1 = S0#?MODULE{tsock = undefined},
             {next_state, connect_delay, S1}
