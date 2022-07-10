@@ -54,13 +54,13 @@ start_link(Config = #{realm := _Realm}) ->
 
 -spec drain(krb_proto_srv()) -> ok.
 drain(Pid) ->
-    gen_server:call(Pid, drain).
+    gen_server:call(Pid, drain, infinity).
 
 -type krb_proto_srv() :: pid().
 
 -spec start_req(krb_proto_srv(), tcp | udp, integer(), atom(), term(), [atom()]) -> {ok, reference()}.
 start_req(Pid, Proto, N, Type, Msg, Expect) ->
-    gen_server:call(Pid, {req, self(), Proto, N, Type, Msg, Expect}).
+    gen_server:call(Pid, {req, self(), Proto, N, Type, Msg, Expect}, infinity).
 
 scrub_msgq(Ref) ->
     receive
@@ -73,7 +73,7 @@ scrub_msgq(Ref) ->
 
 -spec cancel_req(krb_proto_srv(), reference()) -> ok.
 cancel_req(Pid, Ref) ->
-    gen_server:call(Pid, {cancel, Ref}),
+    gen_server:call(Pid, {cancel, Ref}, infinity),
     scrub_msgq(Ref),
     ok.
 

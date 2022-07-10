@@ -154,11 +154,22 @@ connect_delay({call, _From}, _Msg, _S0 = #?MODULE{}) ->
     {keep_state_and_data, [postpone]};
 connect_delay(enter, _PrevState, S0 = #?MODULE{delay = D0}) ->
     {keep_state, S0, [{state_timeout, D0, none}]};
+connect_delay(info, {timeout, _, inet}, #?MODULE{}) ->
+    lager:debug("ignoring bogus inet timeout!"),
+    keep_state_and_data;
 connect_delay(state_timeout, _, S0 = #?MODULE{}) ->
     {next_state, connect, incr_retry(S0)}.
 
-idle(enter, _PrevState, S0 = #?MODULE{ping_timeout = Ping}) ->
-    {keep_state, S0, [{state_timeout, Ping, none}]};
+idle(enter, _PrevState, S0 = #?MODULE{cfsm = FSM, ping_timeout = Ping}) ->
+    case is_process_alive(FSM) of
+        true ->
+            {keep_state, S0, [{state_timeout, Ping, none}]};
+        false ->
+            {stop, normal, S0}
+    end;
+idle(info, {timeout, _, inet}, #?MODULE{}) ->
+    lager:debug("ignoring bogus inet timeout!"),
+    keep_state_and_data;
 idle(info, {tcp, Sock, Data}, _S0 = #?MODULE{tsock = Sock}) ->
     lager:debug("got unsolicited data:~p (~B bytes)", [byte_size(Data)]),
     keep_state_and_data;
@@ -213,6 +224,9 @@ retry(info, {tcp_closed, Sock}, S0 = #?MODULE{tsock = Sock}) ->
     gen_tcp:close(Sock),
     S1 = S0#?MODULE{tsock = undefined},
     {next_state, connect_delay, S1};
+retry(info, {timeout, _, inet}, #?MODULE{}) ->
+    lager:debug("ignoring bogus inet timeout!"),
+    keep_state_and_data;
 retry(info, {tcp, Sock, Data}, S0 = #?MODULE{tsock = Sock, cfsm = ClientFSM,
                                              host = H, expect = Es,
                                              sendref = Ref}) ->
@@ -232,8 +246,16 @@ retry(info, {tcp, Sock, Data}, S0 = #?MODULE{tsock = Sock, cfsm = ClientFSM,
 err({call, From}, _Msg, _S0 = #?MODULE{}) ->
     gen_statem:reply(From, {error, short_circuit}),
     keep_state_and_data;
-err(enter, _PrevState, S0 = #?MODULE{sendref = undefined, delay = D0}) ->
-    {keep_state, S0, [{state_timeout, D0, retry}]};
+err(enter, _PrevState, S0 = #?MODULE{sendref = undefined, delay = D0, cfsm = FSM}) ->
+    case is_process_alive(FSM) of
+        true ->
+            {keep_state, S0, [{state_timeout, D0, retry}]};
+        false ->
+            {stop, normal, S0}
+    end;
+err(info, {timeout, _, inet}, #?MODULE{}) ->
+    lager:debug("ignoring bogus inet timeout!"),
+    keep_state_and_data;
 err(state_timeout, retry, S0 = #?MODULE{}) ->
     {next_state, err_connect, S0#?MODULE{}};
 err(enter, PrevState, S0 = #?MODULE{sendref = Ref, cfsm = ClientFSM}) ->
@@ -244,8 +266,16 @@ err(enter, PrevState, S0 = #?MODULE{sendref = Ref, cfsm = ClientFSM}) ->
 err_connect({call, From}, _Msg, _S0 = #?MODULE{}) ->
     gen_statem:reply(From, {error, short_circuit}),
     keep_state_and_data;
-err_connect(enter, _PrevState, _S0 = #?MODULE{}) ->
-    {keep_state_and_data, [{state_timeout, 0, connect}]};
+err_connect(enter, _PrevState, S0 = #?MODULE{cfsm = FSM}) ->
+    case is_process_alive(FSM) of
+        true ->
+            {keep_state_and_data, [{state_timeout, 0, connect}]};
+        false ->
+            {stop, normal, S0}
+    end;
+err_connect(info, {timeout, _, inet}, #?MODULE{}) ->
+    lager:debug("ignoring bogus inet timeout!"),
+    keep_state_and_data;
 err_connect(state_timeout, connect, S0 = #?MODULE{host = H, port = P,
                                                   timeout = T0}) ->
     case gen_tcp:connect(H, P, ?tcp_options, T0) of
