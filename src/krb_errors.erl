@@ -98,6 +98,11 @@ err_to_atom(73) -> 'KDC_ERR_REVOCATION_STATUS_UNKNOWN';
 err_to_atom(74) -> 'KDC_ERR_REVOCATION_STATUS_UNAVAILABLE';
 err_to_atom(75) -> 'KDC_ERR_CLIENT_NAME_MISMATCH';
 err_to_atom(76) -> 'KDC_ERR_KDC_NAME_MISMATCH';
+err_to_atom(77) -> 'KDC_ERR_INCONSISTENT_KEY_PURPOSE';
+err_to_atom(78) -> 'KDC_ERR_DIGEST_IN_CERT_NOT_ACCEPTED';
+err_to_atom(79) -> 'KDC_ERR_PA_CHECKSUM_MUST_BE_INCLUDED';
+err_to_atom(80) -> 'KDC_ERR_DIGEST_IN_SIGNED_DATA_NOT_ACCEPTED';
+err_to_atom(81) -> 'KDC_ERR_PUBLIC_KEY_ENCRYPTION_NOT_SUPPORTED';
 err_to_atom(V) -> {unknown_error, V}.
 
 atom_to_err('KDC_ERR_NONE') -> 0;
@@ -168,4 +173,9 @@ atom_to_err('KDC_ERR_REVOCATION_STATUS_UNKNOWN') -> 73;
 atom_to_err('KDC_ERR_REVOCATION_STATUS_UNAVAILABLE') -> 74;
 atom_to_err('KDC_ERR_CLIENT_NAME_MISMATCH') -> 75;
 atom_to_err('KDC_ERR_KDC_NAME_MISMATCH') -> 76;
+atom_to_err('KDC_ERR_INCONSISTENT_KEY_PURPOSE') -> 77;
+atom_to_err('KDC_ERR_DIGEST_IN_CERT_NOT_ACCEPTED') -> 78;
+atom_to_err('KDC_ERR_PA_CHECKSUM_MUST_BE_INCLUDED') -> 79;
+atom_to_err('KDC_ERR_DIGEST_IN_SIGNED_DATA_NOT_ACCEPTED') -> 80;
+atom_to_err('KDC_ERR_PUBLIC_KEY_ENCRYPTION_NOT_SUPPORTED') -> 81;
 atom_to_err(V) -> {unknown_error, V}.
