@@ -136,7 +136,7 @@
 
     resource_group_domain_sid   :: pointer(sid()),
     resource_group_count        :: ulong(),
-    resource_groups             :: pointer(array(#group_membership{}))
+    resource_groups             :: pointer(varying_array(#group_membership{}))
     }).
 
 -record(kerb_pac_info_buffer, {
