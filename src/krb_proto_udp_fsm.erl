@@ -168,7 +168,7 @@ retry(info, {udp, Sock, _IP, Port, Data}, S0 = #?MODULE{usock = Sock,
             S1 = S0#?MODULE{pkt = undefined, expect = [], sendref = undefined},
             {next_state, idle, S1};
         {error, not_decoded} ->
-            lager:debug("[~p] got unparseable response, retrying", [H]),
+            lager:debug("[~p] got unparsable response, retrying", [H]),
             {next_state, delay, S0}
     end.
 
@@ -238,7 +238,7 @@ err(info, {udp, Sock, _IP, Port, Data}, S0 = #?MODULE{usock = Sock, host = H,
             S1 = S0#?MODULE{pkt = undefined, expect = [], sendref = undefined},
             {next_state, idle, S1};
         {error, not_decoded} ->
-            lager:debug("[~p] got unparseable response, retrying", [H]),
+            lager:debug("[~p] got unparsable response, retrying", [H]),
             {next_state, err_delay, S0}
     end.
 
