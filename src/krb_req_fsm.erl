@@ -76,7 +76,10 @@ await(Pid) ->
 
 init([Type, Msg, Expect, ProtoFSM]) ->
     S0 = #?MODULE{type = Type, msg = Msg, expect = Expect, proto = ProtoFSM},
-    {ok, wait, S0}.
+    case (catch krb_proto:encode(Type, Msg)) of
+        {ok, _Bytes} -> {ok, wait, S0};
+        Err -> {stop, Err}
+    end.
 
 wait(enter, _PrevState, _S0 = #?MODULE{}) ->
     keep_state_and_data;

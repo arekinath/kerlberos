@@ -105,7 +105,10 @@ ticket_from_rep(Princ, KR = #'KDC-REP'{ticket = T, 'enc-part' = EP = #'EncKDCRep
     #'EncKDCRepPart'{key = Key, flags = Flags, authtime = AuthTime,
                      endtime = EndTime, srealm = SRealm, sname = SName} = EP,
     #'PrincipalName'{'name-type' = 2, 'name-string' = SvcPrinc} = SName,
-    #'PrincipalName'{'name-type' = 1, 'name-string' = Princ} = CName,
+    #'PrincipalName'{'name-type' = 1, 'name-string' = TktPrinc} = CName,
+    TktPrincNorm = [unicode:characters_to_binary(X, utf8) || X <- TktPrinc],
+    PrincNorm = [unicode:characters_to_binary(X, utf8) || X <- Princ],
+    TktPrincNorm = PrincNorm,
     T0 = #{
         key => Key,
         ticket => T,
