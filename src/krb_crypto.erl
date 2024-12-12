@@ -925,7 +925,7 @@ rfc3961_string_to_key_1_test() ->
     ?assertMatch(Key, string_to_key(des_crc, Password, Salt)).
 
 rfc3961_string_to_key_2_test() ->
-    Password = <<"potatoe">>,
+    Password = <<"potato">>,
     Salt = <<"WHITEHOUSE.GOVdanny">>,
     Key = #krb_base_key{etype = des_crc,
                         key = base64:decode(<<"3z0yp0/ZKgE=">>)},
@@ -952,7 +952,7 @@ rfc3961_des3_stk_1_test() ->
 
 rfc3961_des3_stk_2_test() ->
     Salt = <<"WHITEHOUSE.GOVdanny">>,
-    String = <<"potatoe">>,
+    String = <<"potato">>,
     Key = #krb_base_key{etype = des3_md5,
                         key = base64:decode(<<"380jPdCkMgTqbcQ3+xXgYbApecH3Tzd6">>)},
     ?assertMatch(Key, string_to_key(des3_md5, String, Salt)).
