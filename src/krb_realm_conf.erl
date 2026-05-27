@@ -73,6 +73,8 @@
 configure(Realm) ->
     configure(Realm, #{}).
 
+-compile([{parse_transform, lager_transform}]).
+
 -spec configure(realm(), config()) -> config().
 configure(Realm, UserConf) ->
     Conf0 = #{
@@ -116,8 +118,14 @@ configure(Realm, UserConf) ->
 
 -spec lookup_kdcs(config(), string()) -> config().
 lookup_kdcs(C0, Domain) ->
-    R = inet_res:resolve("_kerberos._udp." ++ Domain, in, srv,
-        [{nxdomain_reply, true}]),
+    lookup_kdcs(C0, Domain, false).
+
+-spec lookup_kdcs(config(), string(), boolean()) -> config().
+lookup_kdcs(C0, Domain, ForceTCP) ->
+    Label = "_kerberos._udp." ++ string:to_lower(Domain),
+    ResOpts0 = [{nxdomain_reply, true}, {edns, 0}, {udp_payload_size, 1200}],
+    ResOpts1 = if ForceTCP -> [{usevc, true} | ResOpts0]; true -> ResOpts0 end,
+    R = inet_res:resolve(Label, in, srv, ResOpts1),
     case R of
         {ok, Msg} ->
             Answers = inet_dns:msg(Msg, anlist),
@@ -140,6 +148,8 @@ lookup_kdcs(C0, Domain) ->
             DNSKDCs = [{Name, Port} ||
                 {_TTL, {_Prio, _Weight, Port, Name}} <- Srvs],
             C0#{ttl => MinTTL1, kdc => Kdc0 ++ DNSKDCs};
+        {error, formerr} when (not ForceTCP) ->
+            lookup_kdcs(C0, Domain, true);
         {error, {_Why, Msg}} ->
             NSs = inet_dns:msg(Msg, nslist),
             TTLs0 = lists:foldl(fun (RR, Acc) ->
